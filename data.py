@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens={'<pad_topic>': 0, '<unk_topic>': 1, '<fake_topic>': 2},
-                 essay_special_tokens={'<sos>': 0, '<eos>': 1, '<unk>': 2, '<pad>': 3}, ):
+                 essay_special_tokens={'<pad>': 0, '<sos>': 1, '<eos>': 2, '<unk>': 3, }, ):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
