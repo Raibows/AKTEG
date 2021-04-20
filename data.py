@@ -4,13 +4,13 @@ from torch.utils.data import Dataset
 
 
 class ZHIHU_dataset(Dataset):
-    def __init__(self, path, topic_size, essay_size, topic_threshold, topic_padding_num, essay_padding_len,
+    def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens={'<pad_topic>': 0, '<unk_topic>': 1, '<fake_topic>': 2},
-                 essay_special_tokens={'<sos>': 0, '<eos>': 1, '<unk>': 2, '<pad>': 3},):
+                 essay_special_tokens={'<sos>': 0, '<eos>': 1, '<unk>': 2, '<pad>': 3}, ):
 
         self.path = path
-        self.topic_size = topic_size
-        self.essay_size = essay_size
+        self.topic_num_limit = topic_num_limit
+        self.essay_vocab_size = essay_vocab_size
         self.topic_threshold = topic_threshold
         self.essay_padding_len = essay_padding_len
         self.topic_padding_num = topic_padding_num
@@ -20,8 +20,8 @@ class ZHIHU_dataset(Dataset):
         self.data_essays = None
 
         temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
-        self.topic2idx, self.idx2topic = self.__limit_size(topic_special_tokens, temp_topic2idx, topic_size, self.data_topics)
-        self.essay2idx, self.idx2essay = self.__limit_size(essay_special_tokens, temp_essay2idx, essay_size, self.data_essays)
+        self.topic2idx, self.idx2topic = self.__limit_size(topic_special_tokens, temp_topic2idx, topic_num_limit, self.data_topics)
+        self.essay2idx, self.idx2essay = self.__limit_size(essay_special_tokens, temp_essay2idx, essay_vocab_size, self.data_essays)
         self.__limit_datas()
         self.__encode_datas()
 

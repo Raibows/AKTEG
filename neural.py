@@ -45,6 +45,7 @@ class Decoder(nn.Module):
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
         self.embedding_layer.weight.requires_grad = True
         self.hidden_size = hidden_size
+        self.layer_num = layer_num
         self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=False)
         self.fc = nn.Linear(hidden_size, vocab_size)
 
@@ -64,14 +65,11 @@ class Decoder(nn.Module):
         outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
 
         outs = outs.index_select(1, idx_reverse)
-        # select the real final state
-        outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
 
         h = h.index_select(1, idx_reverse)
         h = h.reshape(self.layer_num, h.size(1), -1)
         c = c.index_select(1, idx_reverse)
         c = c.reshape(self.layer_num, c.size(1), -1)
-
 
         logits = self.fc(outs.squeeze(0))
 
@@ -95,10 +93,12 @@ class Seq2Seq(nn.Module):
 
         h, c = self.encoder(topic_input[0], topic_input[1])
 
-        for now_input in range(max_essay_len):
-            logits, (h, c) = self.decoder((essay_input[0][:, 0].unsqueeze(0), essay_input[1][:, 0].unsqueeze(0)), h, c)
-            decoder_outputs[now_input] = logits
+        logits, (h, c) = self.decoder((essay_input[0], essay_input[1]), h, c)
+        # for now_input in range(max_essay_len):
+        #     logits, (h, c) = self.decoder((essay_input[0][:, 0].unsqueeze(0), essay_input[1][:, 0].unsqueeze(0)), h, c)
+        #     decoder_outputs[now_input] = logits
 
+        return logits
 
 if __name__ == '__main__':
     word_num = 100
