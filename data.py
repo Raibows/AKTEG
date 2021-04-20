@@ -1,13 +1,14 @@
 import copy
-
 import torch
 from torch.utils.data import Dataset
+from config import config_zhihu_dataset
 
 
 class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
-                 topic_special_tokens={'<pad_topic>': 0, '<unk_topic>': 1, '<fake_topic>': 2},
-                 essay_special_tokens={'<pad>': 0, '<sos>': 1, '<eos>': 2, '<unk>': 3, }, ):
+                 topic_special_tokens=config_zhihu_dataset.topic_special_tokens,
+                 essay_special_tokens=config_zhihu_dataset.essay_special_tokens,
+                 raw_mode=False):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -21,10 +22,13 @@ class ZHIHU_dataset(Dataset):
         self.data_essays = None
 
         temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
-        self.topic2idx, self.idx2topic = self.__limit_size(topic_special_tokens, temp_topic2idx, topic_num_limit, self.data_topics)
-        self.essay2idx, self.idx2essay = self.__limit_size(essay_special_tokens, temp_essay2idx, essay_vocab_size, self.data_essays)
-        self.__limit_datas()
-        self.__encode_datas()
+        self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
+                                                                        topic_num_limit, self.data_topics)
+        self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
+                                                                        essay_vocab_size, self.data_essays)
+        if not raw_mode:
+            _ = self.limit_datas()
+            self.__encode_datas()
 
 
     def __encode_datas(self):
@@ -35,7 +39,7 @@ class ZHIHU_dataset(Dataset):
             self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t, ret_tensor=True)
             self.data_essays[i], self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
 
-    def __limit_size(self, reserved, temp2idx, size, datas):
+    def __limit_dict_by_frequency(self, reserved, temp2idx, size, datas):
         assert datas and size >= len(reserved)
         idx2temp = [None for _ in temp2idx]
         for k, v in temp2idx.items(): idx2temp[v] = k
@@ -51,7 +55,7 @@ class ZHIHU_dataset(Dataset):
 
         return reserved, idx2temp
 
-    def __limit_datas(self):
+    def limit_datas(self):
         # delete the data whose the number of in dict topics below the threshold
         delete_indexs = []
         for i, one in enumerate(self.data_topics):
@@ -65,6 +69,7 @@ class ZHIHU_dataset(Dataset):
             del self.data_essays[d]
             del self.data_topics[d]
         assert len(self.data_essays) == len(self.data_topics)
+        return delete_indexs
 
     def __preprocess(self, sent):
         temp = []
@@ -136,6 +141,9 @@ class ZHIHU_dataset(Dataset):
 
     def __getitem__(self, item):
         return (self.data_topics[item], self.len_topics[item], self.data_essays[item], self.len_essays[item])
+
+    def __setitem__(self, key, value):
+        self.data_topics[key], self.len_topics[key], self.data_essays[key], self.len_essays[key] = value
 
 
 
