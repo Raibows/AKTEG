@@ -1,5 +1,6 @@
 import copy
 
+import torch
 from torch.utils.data import Dataset
 
 
@@ -31,8 +32,8 @@ class ZHIHU_dataset(Dataset):
         self.len_topics = [0 for _ in self.data_topics]
         self.len_essays = [0 for _ in self.data_essays]
         for i, (t, e) in enumerate(zip(self.data_topics, self.data_essays)):
-            self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t)
-            self.data_essays[i], self.len_essays[i] = self.convert_essay2idx(e)
+            self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t, ret_tensor=True)
+            self.data_essays[i], self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
 
     def __limit_size(self, reserved, temp2idx, size, datas):
         assert datas and size >= len(reserved)
@@ -102,7 +103,7 @@ class ZHIHU_dataset(Dataset):
     def convert_idx2topic(self, idxs):
         return [self.idx2topic[i] for i in idxs]
 
-    def convert_essay2idx(self, essay, padding_len=None):
+    def convert_essay2idx(self, essay, padding_len=None, ret_tensor=False):
         if padding_len == None:
             padding_len = self.essay_padding_len
         temp = [self.essay2idx['<pad>'] for _ in range(padding_len)]
@@ -112,10 +113,11 @@ class ZHIHU_dataset(Dataset):
                 temp[i] = self.essay2idx['<unk>']
             else:
                 temp[i] = self.essay2idx[one]
-
+        if ret_tensor:
+            return torch.tensor(temp, dtype=torch.int32), torch.tensor(real_len, dtype=torch.int32)
         return temp, real_len
 
-    def convert_topic2idx(self, topic, padding_num=None):
+    def convert_topic2idx(self, topic, padding_num=None, ret_tensor=False):
         if padding_num == None:
             padding_num = self.topic_padding_num
         temp = [self.topic2idx['<pad_topic>'] for _ in range(padding_num)]
@@ -125,7 +127,8 @@ class ZHIHU_dataset(Dataset):
                 temp[i] = self.topic2idx['<unk_topic>']
             else:
                 temp[i] = self.topic2idx[one]
-
+        if ret_tensor:
+            return torch.tensor(temp, dtype=torch.int32), torch.tensor(real_num, dtype=torch.int32)
         return temp, real_num
 
     def __len__(self):

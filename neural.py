@@ -24,7 +24,7 @@ class Encoder(nn.Module):
 
         sent = embeddings.index_select(1, idx_sort)
 
-        sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort)
+        sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort.cpu())
         _, (h, c) = self.lstm(sent_packed)
         # outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
 
@@ -60,7 +60,7 @@ class Decoder(nn.Module):
 
         sent = embeddings.index_select(1, idx_sort)
 
-        sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort)
+        sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort.cpu())
         outs, (h, c) = self.lstm(sent_packed, (init_h, init_c))
         outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
 
