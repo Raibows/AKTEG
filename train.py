@@ -14,7 +14,7 @@ tools_setup_seed(667)
 
 device = torch.device('cuda:0')
 
-dataset = ZHIHU_dataset(path='../data/zhihu.txt', topic_num_limit=100, essay_vocab_size=50000,
+dataset = ZHIHU_dataset(path='../data/zhihu.txt', topic_num_limit=100, essay_vocab_size=500,
                         topic_threshold=4, topic_padding_num=5, essay_padding_len=100)
 dataset_loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
@@ -33,6 +33,7 @@ def to_gpu(*params, device=torch.device('cpu')):
 def train(dataset, dataset_loader):
     seq2seq.train()
     loss_mean = 0.0
+    teacher_force_ratio = 0.75
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
         for topic, topic_len, essay, essay_len in dataset_loader:
             temp_sos = torch.full([essay.size(0), 1], dataset.essay2idx['<sos>'])
@@ -43,7 +44,7 @@ def train(dataset, dataset_loader):
 
             topic, topic_len, essay_input, essay_target = to_gpu(topic, topic_len, essay_input, essay_target, device=device)
 
-            logits = seq2seq.forward((topic, topic_len), essay_input, essay_target, teacher_force_ratio=1.0)
+            logits = seq2seq.forward((topic, topic_len), essay_input, teacher_force_ratio=teacher_force_ratio)
 
             essay_target = essay_target.view(-1)
             logits = logits.view(-1, dataset.essay_vocab_size)
@@ -53,40 +54,38 @@ def train(dataset, dataset_loader):
             nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=1.0, norm_type=2.0)
             optimizer.step()
 
-            pbar.set_postfix_str(f"{loss.item():.4f}")
+            pbar.set_postfix_str(f"loss: {loss.item():.4f}")
             loss_mean += loss.item()
             pbar.update(1)
     return loss_mean / len(dataset_loader)
 
-# @torch.no_grad()
-# def validation(dataset, dataset_loader):
-#     seq2seq.eval()
-#     loss_mean = 0.0
-#     with tqdm(total=len(dataset_loader), desc='test') as pbar:
-#         for topic, topic_len, essay, essay_len in dataset_loader:
-#             temp_sos = torch.full([essay.size(0), 1], dataset.essay2idx['<sos>'])
-#             temp_eos = torch.full([essay.size(0), 1], dataset.essay2idx['<eos>'])
-#             essay_input = torch.cat([temp_sos, essay], dim=1)
-#             essay_target = torch.cat([essay, temp_eos], dim=1)
-#             essay_len += 1
-#             topic, topic_len, essay_input, essay_target, essay_len = \
-#                 to_gpu(topic, topic_len, essay_input, essay_target, essay_len, device=device)
-#
-#             logits = seq2seq.forward((topic, topic_len), (essay_input, essay_len), (essay_target, essay_len),
-#                                      teacher_force_ratio=1.0)
-#
-#             essay_target = essay_target.view(-1)
-#             logits = logits.view(-1, dataset.essay_vocab_size)
-#             optimizer.zero_grad()
-#             loss = criterion(logits, essay_target)
-#             loss.backward()
-#             nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=1.0, norm_type=2.0)
-#             optimizer.step()
-#
-#             pbar.set_postfix_str(f"{loss.item():.4f}")
-#             loss_mean += loss.item()
-#             pbar.update(1)
-#     return loss_mean / len(dataset_loader)
+@torch.no_grad()
+def validation(dataset, dataset_loader):
+    seq2seq.eval()
+    loss_mean = 0.0
+    teacher_force_ratio = 0.0
+    optimizer.zero_grad()
+    with tqdm(total=len(dataset_loader), desc='validation') as pbar:
+        for topic, topic_len, essay, essay_len in dataset_loader:
+            temp_sos = torch.full([essay.size(0), 1], dataset.essay2idx['<sos>'])
+            temp_eos = torch.full([essay.size(0), 1], dataset.essay2idx['<eos>'])
+            essay_input = torch.cat([temp_sos, essay], dim=1)
+            essay_target = torch.cat([essay, temp_eos], dim=1)
+            essay_len += 1
+
+            topic, topic_len, essay_input, essay_target = to_gpu(topic, topic_len, essay_input, essay_target,
+                                                                 device=device)
+
+            logits = seq2seq.forward((topic, topic_len), essay_input, teacher_force_ratio=teacher_force_ratio)
+
+            essay_target = essay_target.view(-1)
+            logits = logits.view(-1, dataset.essay_vocab_size)
+            loss = criterion(logits, essay_target)
+
+            pbar.set_postfix_str(f"loss: {loss.item():.4f}")
+            loss_mean += loss.item()
+            pbar.update(1)
+    return loss_mean / len(dataset_loader)
 
 
 

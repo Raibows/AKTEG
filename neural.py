@@ -71,11 +71,11 @@ class Seq2Seq(nn.Module):
         self.essay_vocab_size = essay_vocab_size
         self.device = device
 
-    def forward(self, topic_len_input:tuple, essay_input:torch.Tensor, essay_target:torch.Tensor,
-                teacher_force_ratio=0.5):
+    def forward(self, topic_len_input:tuple, essay_input:torch.Tensor, teacher_force_ratio=0.5):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
+        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
         batch_size = topic_len_input[0].shape[0]
         max_essay_len = essay_input.shape[1]
 
@@ -83,20 +83,30 @@ class Seq2Seq(nn.Module):
 
         h, c = self.encoder(topic_len_input[0], topic_len_input[1])
 
-        for now_input in range(max_essay_len):
-            logits, (h, c) = self.decoder(essay_input[:, now_input], h, c)
-            decoder_outputs[now_input] = logits
+        teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
+        # first input token is <sos>
+        now_input = essay_input[:, 0]
+        for now_step in range(1, max_essay_len):
+            logits, (h, c) = self.decoder(now_input, h, c)
+            decoder_outputs[now_step - 1] = logits
+            if teacher_mode_chocie[now_step] < teacher_force_ratio:
+                now_input = essay_input[:, now_step]
+            else:
+                now_input = logits.argmax(1)
+
+        logits, _ = self.decoder(now_input, h, c)
+        decoder_outputs[-1] = logits
 
         return decoder_outputs
 
 if __name__ == '__main__':
     word_num = 100
     maxlen = 5
-    batch_size = 4
+    batch_size = 1
     word_dim = 300
     num_hidden = 200
 
-    sentence = torch.zeros([batch_size, maxlen], dtype=torch.long)
+    sentence = torch.tensor([[0, 1, 2, 3, 4]], dtype=torch.long)
     sentence_len = torch.randint(1, maxlen, size=[batch_size], dtype=torch.long)
 
 
@@ -109,7 +119,7 @@ if __name__ == '__main__':
 
     seq2seq = Seq2Seq(encoder, decoder, word_num, torch.device('cpu'))
 
-    seq2seq.forward((sentence, sentence_len), sentence, sentence)
+    seq2seq.forward((sentence, sentence_len), sentence)
 
 
     pass
