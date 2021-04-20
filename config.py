@@ -18,3 +18,6 @@ class config_train:
     learning_rate = 1e-3
     fold_k = 5
     train_teacher_force_rate = 0.75
+
+class config_seq2seq:
+    model_save_fmt = './results/seq2seq/{}_{:.5f}.pt'

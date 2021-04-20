@@ -68,7 +68,7 @@ def tools_split_train_test_set():
     from data import ZHIHU_dataset
     from config import config_zhihu_dataset as c
     all_dataset = ZHIHU_dataset(c.raw_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                c.topic_padding_num, c.essay_padding_len, raw_mode=True)
+                                c.topic_padding_num, c.essay_padding_len)
     delete_indexs = all_dataset.limit_datas()
     datas = tools_read_line_like_file(c.raw_data_path)
     all = set([i for i in range(len(datas))]) - set(delete_indexs)

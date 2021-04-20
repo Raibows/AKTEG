@@ -8,7 +8,7 @@ from data import ZHIHU_dataset
 from neural import Encoder, Decoder, Seq2Seq
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_k_fold_split
-from config import config_zhihu_dataset, config_train
+from config import config_zhihu_dataset, config_train, config_seq2seq
 
 
 tools_setup_seed(667)
@@ -22,10 +22,23 @@ train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                   topic_padding_num=config_zhihu_dataset.topic_padding_num,
                                   essay_padding_len=config_zhihu_dataset.essay_padding_len)
 
+test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
+                                 topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                 essay_vocab_size=config_zhihu_dataset.essay_vocab_size,
+                                 topic_threshold=config_zhihu_dataset.topic_threshold,
+                                 topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                 essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                 prior={'topic2idx': train_all_dataset.topic2idx,
+                                        'idx2topic': train_all_dataset.idx2topic,
+                                        'essay2idx': train_all_dataset.essay2idx,
+                                        'idx2essay': train_all_dataset.idx2essay})
+test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size)
+
+tools_get_logger('data').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
 
 
-encoder = Encoder(train_all_dataset.topic_num_limit, 100, layer_num=2, hidden_size=100, is_bid=True)
-decoder = Decoder(train_all_dataset.essay_vocab_size, 100, 2, encoder.output_size)
+encoder = Encoder(train_all_dataset.topic_num_limit, 300, layer_num=2, hidden_size=300, is_bid=True)
+decoder = Decoder(train_all_dataset.essay_vocab_size, 300, 2, encoder.output_size)
 seq2seq = Seq2Seq(encoder, decoder, train_all_dataset.essay_vocab_size, device)
 seq2seq.to(device)
 
@@ -98,6 +111,7 @@ def validation(train_all_dataset, dataset_loader):
 
 if __name__ == '__main__':
     writer = tools_get_tensorboard_writer()
+    best_save_loss = 1e9
     for ep in range(config_train.epoch):
         kfolds = tools_k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
         train_loss = 0.0
@@ -107,13 +121,25 @@ if __name__ == '__main__':
             valid_loss_t = validation(train_all_dataset, valid_dataloader)
             train_loss += train_loss_t
             valid_loss += valid_loss_t
-            tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done train loss {train_loss_t} valid loss {valid_loss_t}')
+            tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
+                                           f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
+        test_loss = validation(train_all_dataset, test_all_dataloader)
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
         del kfolds
         writer.add_scalar('Loss/train', train_loss, ep)
         writer.add_scalar('Loss/valid', valid_loss, ep)
+        writer.add_scalar('Loss/test', test_loss, ep)
+
+        tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f} '
+                                       f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}')
+
+        if test_loss < best_save_loss:
+            save_path = config_seq2seq.model_save_fmt.format(tools_get_time(), test_loss)
+            torch.save(seq2seq.state_dict(), save_path)
+            best_save_loss = test_loss
+            tools_get_logger('train').info(f"saving model to {save_path}, now best_test_loss {best_save_loss}")
 
 
 

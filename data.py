@@ -8,7 +8,7 @@ class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens=config_zhihu_dataset.topic_special_tokens,
                  essay_special_tokens=config_zhihu_dataset.essay_special_tokens,
-                 raw_mode=False):
+                 prior=None):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -22,13 +22,17 @@ class ZHIHU_dataset(Dataset):
         self.data_essays = None
 
         temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
-        self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
-                                                                        topic_num_limit, self.data_topics)
-        self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
-                                                                        essay_vocab_size, self.data_essays)
-        if not raw_mode:
-            _ = self.limit_datas()
-            self.__encode_datas()
+        if not prior:
+            self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
+                                                                            topic_num_limit, self.data_topics)
+            self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
+                                                                            essay_vocab_size, self.data_essays)
+        else:
+            self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
+            self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
+        self.__encode_datas()
+
+
 
 
     def __encode_datas(self):
@@ -69,6 +73,7 @@ class ZHIHU_dataset(Dataset):
             del self.data_essays[d]
             del self.data_topics[d]
         assert len(self.data_essays) == len(self.data_topics)
+        print(f'delete {len(delete_indexs)}')
         return delete_indexs
 
     def __preprocess(self, sent):
