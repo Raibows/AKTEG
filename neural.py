@@ -25,19 +25,19 @@ class Encoder(nn.Module):
         sent = embeddings.index_select(1, idx_sort)
 
         sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort)
-        outs, (h, c) = self.lstm(sent_packed)
-        outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
+        _, (h, c) = self.lstm(sent_packed)
+        # outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
 
-        outs = outs.index_select(1, idx_reverse)
+        # outs = outs.index_select(1, idx_reverse)
         h = h.index_select(1, idx_reverse)
-        h = h.reshape(self.layer_num, outs.size(1), -1)
+        h = h.reshape(self.layer_num, h.size(1), -1)
         c = c.index_select(1, idx_reverse)
-        c = c.reshape(self.layer_num, outs.size(1), -1)
+        c = c.reshape(self.layer_num, c.size(1), -1)
 
         # select the real final state
-        outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
+        # outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
 
-        return outs, (h, c)
+        return h, c
 
 class Decoder(nn.Module):
     def __init__(self, vocab_size, embed_size, layer_num, hidden_size):
@@ -46,6 +46,7 @@ class Decoder(nn.Module):
         self.embedding_layer.weight.requires_grad = True
         self.hidden_size = hidden_size
         self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=False)
+        self.fc = nn.Linear(hidden_size, vocab_size)
 
     def forward(self, inputs, init_h, init_c):
         # (sen, sen_len)
@@ -59,14 +60,44 @@ class Decoder(nn.Module):
         sent = embeddings.index_select(1, idx_sort)
 
         sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort)
-        outs, _ = self.lstm(sent_packed, (init_h, init_c))
+        outs, (h, c) = self.lstm(sent_packed, (init_h, init_c))
         outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
 
         outs = outs.index_select(1, idx_reverse)
         # select the real final state
         outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
 
-        return outs
+        h = h.index_select(1, idx_reverse)
+        h = h.reshape(self.layer_num, h.size(1), -1)
+        c = c.index_select(1, idx_reverse)
+        c = c.reshape(self.layer_num, c.size(1), -1)
+
+
+        logits = self.fc(outs.squeeze(0))
+
+        return logits, (h, c)
+
+
+class Seq2Seq(nn.Module):
+    def __init__(self, encoder, decoder, essay_vocab_size, device):
+        super(Seq2Seq, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.essay_vocab_size = essay_vocab_size
+        self.device = device
+
+    def forward(self, topic_input, essay_input, essay_target, teacher_force_ratio=0.5):
+        # topic_input [topic, topic_len]
+        # topic [batch_size, seq_len]
+        batch_size = topic_input[0].shape[0]
+        max_essay_len = essay_input[0].shape[1]
+        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.essay_vocab_size], device=self.device)
+
+        h, c = self.encoder(topic_input[0], topic_input[1])
+
+        for now_input in range(max_essay_len):
+            logits, (h, c) = self.decoder((essay_input[0][:, 0].unsqueeze(0), essay_input[1][:, 0].unsqueeze(0)), h, c)
+            decoder_outputs[now_input] = logits
 
 
 if __name__ == '__main__':
@@ -80,10 +111,15 @@ if __name__ == '__main__':
     sentence_len = torch.randint(1, maxlen, size=[batch_size])
 
     encoder = Encoder(word_num, embed_size=word_dim, layer_num=2, hidden_size=num_hidden, is_bid=True)
-    outs, (h, c) = encoder(sentence, sentence_len)
+    # h, c = encoder(sentence, sentence_len)
 
     decoder = Decoder(word_num, word_dim, 2, encoder.output_size)
 
-    outs_d = decoder((sentence, sentence_len), h, c)
+    # logits = decoder((sentence, sentence_len), h, c)
+
+    seq2seq = Seq2Seq(encoder, decoder, word_num, torch.device('cpu'))
+
+    seq2seq.forward((sentence, sentence_len), (sentence, sentence_len), (sentence, sentence_len))
+
 
     pass
