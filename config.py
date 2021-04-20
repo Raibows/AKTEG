@@ -11,3 +11,10 @@ class config_zhihu_dataset:
     essay_padding_len = 100
     topic_special_tokens = {'<pad_topic>': 0, '<unk_topic>': 1, '<fake_topic>': 2}
     essay_special_tokens = {'<pad>': 0, '<sos>': 1, '<eos>': 2, '<unk>': 3, }
+
+class config_train:
+    epoch = 100
+    batch_size = 64
+    learning_rate = 1e-3
+    fold_k = 5
+    train_teacher_force_rate = 0.75
