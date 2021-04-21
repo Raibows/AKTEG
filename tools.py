@@ -1,6 +1,8 @@
 import logging
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import os
+import shutil
 
 
 
@@ -43,4 +45,13 @@ def tools_setup_seed(seed):
     torch.backends.cudnn.deterministic = True
     tools_get_logger('tools').info(f"set the seed to {seed}")
 
+def tools_make_dir(path):
+    t = None
+    for i in range(len(path)-1, -1, -1):
+        if path[i] == '/':
+            t = i
+            break
+    os.makedirs(path[:t], exist_ok=True)
 
+def tools_copy_file(source_path, target_path):
+    shutil.copy(source_path, target_path)

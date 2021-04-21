@@ -1,13 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from preprocess import load_pickle_obj
 
 class Encoder(nn.Module):
-    def __init__(self, vocab_size, embed_size, layer_num, hidden_size, is_bid):
+    def __init__(self, vocab_size, embed_size, layer_num, hidden_size, is_bid, pretrained_path):
         super(Encoder, self).__init__()
         self.hidden_size = hidden_size
         self.layer_num = layer_num
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        if pretrained_path:
+            self.embedding_layer.from_pretrained(
+                torch.tensor(load_pickle_obj(pretrained_path), dtype=torch.float)
+            )
         self.embedding_layer.weight.requires_grad = True
         self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid)
         self.direction = 2 if is_bid else 1
@@ -40,9 +45,13 @@ class Encoder(nn.Module):
         return h, c
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, embed_size, layer_num, hidden_size):
+    def __init__(self, vocab_size, embed_size, layer_num, hidden_size, pretrained_path):
         super(Decoder, self).__init__()
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        if pretrained_path:
+            self.embedding_layer.from_pretrained(
+                torch.tensor(load_pickle_obj(pretrained_path), dtype=torch.float)
+            )
         self.embedding_layer.weight.requires_grad = True
         self.hidden_size = hidden_size
         self.layer_num = layer_num

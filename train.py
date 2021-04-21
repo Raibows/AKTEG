@@ -7,14 +7,14 @@ from torch.utils.data import DataLoader
 from data import ZHIHU_dataset
 from neural import Encoder, Decoder, Seq2Seq
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed
-from split_data import k_fold_split
+    tools_setup_seed, tools_make_dir, tools_copy_file
+from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train, config_seq2seq
 
 
 tools_setup_seed(667)
 
-device = torch.device('cuda:0')
+device = torch.device(config_zhihu_dataset.device_name)
 
 train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                   topic_num_limit=config_zhihu_dataset.topic_num_limit,
@@ -33,18 +33,31 @@ test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
                                         'idx2topic': train_all_dataset.idx2topic,
                                         'essay2idx': train_all_dataset.essay2idx,
                                         'idx2essay': train_all_dataset.idx2essay})
+
 test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size)
 
 tools_get_logger('data').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
 
+encoder = Encoder(vocab_size=train_all_dataset.topic_num_limit,
+                  embed_size=config_seq2seq.encoder_embed_size,
+                  layer_num=config_seq2seq.encoder_lstm_layer_num,
+                  hidden_size=config_seq2seq.encoder_lstm_hidden_size,
+                  is_bid=config_seq2seq.encoder_lstm_is_bid,
+                  pretrained_path=config_zhihu_dataset.topic_preprocess_wv_path)
 
-encoder = Encoder(train_all_dataset.topic_num_limit, 300, layer_num=2, hidden_size=300, is_bid=True)
-decoder = Decoder(train_all_dataset.essay_vocab_size, 300, 2, encoder.output_size)
+decoder = Decoder(vocab_size=train_all_dataset.essay_vocab_size,
+                  embed_size=config_seq2seq.decoder_embed_size,
+                  layer_num=config_seq2seq.decoder_lstm_layer_num,
+                  hidden_size=encoder.output_size,
+                  pretrained_path=config_zhihu_dataset.essay_preprocess_wv_path)
+
 seq2seq = Seq2Seq(encoder, decoder, train_all_dataset.essay_vocab_size, device)
 seq2seq.to(device)
 
 optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
 criterion = nn.CrossEntropyLoss(ignore_index=train_all_dataset.essay2idx['<pad>']).to(device)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.9, patience=3, min_lr=6e-6)
+warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 3 else 1)
 
 def to_gpu(*params, device=torch.device('cpu')):
     return [p.to(device) for p in params]
@@ -53,7 +66,7 @@ def to_gpu(*params, device=torch.device('cpu')):
 def train(train_all_dataset, dataset_loader):
     seq2seq.train()
     loss_mean = 0.0
-    teacher_force_ratio = config_train.train_teacher_force_rate
+    teacher_force_ratio = config_seq2seq.teacher_force_rate
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
         for topic, topic_len, essay_input, essay_target, _ in dataset_loader:
 
@@ -116,6 +129,9 @@ if __name__ == '__main__':
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
         test_loss = validation(train_all_dataset, test_all_dataloader)
+        scheduler.step(test_loss)
+        warmup_scheduler.step(ep)
+
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
         del kfolds
@@ -128,6 +144,8 @@ if __name__ == '__main__':
 
         if test_loss < best_save_loss:
             save_path = config_seq2seq.model_save_fmt.format(tools_get_time(), test_loss)
+            tools_make_dir(save_path)
+            tools_copy_file('./config.py', save_path+'.config.py')
             torch.save(seq2seq.state_dict(), save_path)
             best_save_loss = test_loss
             tools_get_logger('train').info(f"saving model to {save_path}, now best_test_loss {best_save_loss}")
