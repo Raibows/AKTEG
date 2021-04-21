@@ -148,7 +148,7 @@ if __name__ == '__main__':
             tools_copy_file('./config.py', save_path+'.config.py')
             torch.save(seq2seq.state_dict(), save_path)
             best_save_loss = test_loss
-            tools_get_logger('train').info(f"saving model to {save_path}, now best_test_loss {best_save_loss}")
+            tools_get_logger('train').info(f"saving model to {save_path}, now best_test_loss {best_save_loss:.4f}")
 
 
 
