@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset
 from config import config_zhihu_dataset
 from tools import tools_get_logger
+from tools import tools_load_pickle_obj
 
 
 class ZHIHU_dataset(Dataset):
@@ -21,7 +22,13 @@ class ZHIHU_dataset(Dataset):
         self.len_topics = None
         self.len_essays = None
         self.data_essays = None
+        self.data_mems = None
         self.delete_indexs = []
+        self.mem2idx = None
+        self.idx2mem = None
+        self.memory_corpus = None
+        self.topic_synonym_normal_num = config_zhihu_dataset.topic_synonym_normal_num
+        self.topic_synonym_max_num = config_zhihu_dataset.topic_synonym_max_num
 
         temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
         self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
@@ -31,11 +38,15 @@ class ZHIHU_dataset(Dataset):
                                                                             self.topic_num_limit, self.data_topics)
             self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
                                                                             self.essay_vocab_size, self.data_essays)
+            self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_zhihu_dataset.mem2idx_and_idx2mem_path)
+            self.memory_corpus = tools_load_pickle_obj(config_zhihu_dataset.topic_2_mems_corpus_path)
         else:
             self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
             self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
-        self.__encode_datas()
+            self.mem2idx, self.idx2mem = prior['mem2idx'], prior['idx2mem']
+            self.memory_corpus = prior['memory_corpus']
 
+        self.__encode_datas()
         self.print_info()
 
 
@@ -44,8 +55,10 @@ class ZHIHU_dataset(Dataset):
         self.len_topics = [0 for _ in self.data_topics]
         self.len_essays = [0 for _ in self.data_essays]
         essays = {'input':[], 'target': []}
+        self.data_mems = [0 for _ in self.data_topics]
         for i, (t, e) in enumerate(zip(self.data_topics, self.data_essays)):
             self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t, ret_tensor=True)
+            self.data_mems[i] = self.get_mems_by_topics(self.data_topics[i].tolist(), ret_tensor=True)
             ei, et, self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
             essays['input'].append(ei)
             essays['target'].append(et)
@@ -124,6 +137,34 @@ class ZHIHU_dataset(Dataset):
     def convert_idx2topic(self, idxs):
         return [self.idx2topic[i] for i in idxs]
 
+    def convert_idx2mem(self, idxs):
+        return [self.idx2mem[i] for i in idxs]
+
+    def convert_mem2idx(self, mems):
+        temp = [self.mem2idx[i] for i in mems]
+        return temp
+
+    def get_mems_by_topics(self, topics:list, ret_tensor=False):
+        # topics contains series of topic_idxs
+        mems = ['<oov>' for _ in range(self.topic_synonym_max_num)]
+        has_set = set()
+        for t in topics:
+            if self.memory_corpus[t][0] != '<oov>':
+                has_set.add(t)
+        if len(has_set) != 0:
+            mems = []
+            nums = [self.topic_synonym_max_num // len(has_set) for _ in has_set]
+            if self.topic_synonym_max_num % len(has_set) != 0:
+                nums[0] = self.topic_synonym_max_num - sum(nums[1:])
+            for t, n in zip(has_set, nums):
+                mems.extend(self.memory_corpus[t][:n])
+
+        mems = self.convert_mem2idx(mems)
+
+        if ret_tensor:
+            return torch.tensor(mems, dtype=torch.int64)
+        return mems
+
     def convert_essay2idx(self, essay, padding_len=None, ret_tensor=False):
         # return (essay_input, essay_target, essay_real_len)
         # essay_input <sos> words <pad>
@@ -172,32 +213,18 @@ class ZHIHU_dataset(Dataset):
         return len(self.data_topics)
 
     def __getitem__(self, item):
-        return (self.data_topics[item], self.len_topics[item],
+        return (self.data_topics[item], self.len_topics[item], self.data_mems[item],
                 self.data_essays['input'][item], self.data_essays['target'][item], self.len_essays[item])
 
     def __setitem__(self, key, value):
-        self.data_topics[key], self.len_topics[key], self.data_essays['input'][key], \
+        self.data_topics[key], self.len_topics[key], self.data_mems[key], self.data_essays['input'][key], \
         self.data_essays['target'][key], self.len_essays[key] = value
 
 
 
 if __name__ == '__main__':
     # essay_special_tokens = {'<pad>': 0, '<sos>': 1, '<eos>': 2, '<unk>': 3, }
-    from config import config_zhihu_dataset as c
-    all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                c.topic_padding_num, c.essay_padding_len)
-    sentence = ['你', '好', '啊']
-    ei, et, real = all_dataset.convert_essay2idx(sentence, padding_len=5)
-    print(ei)
-    print(et)
-    print(real)
-
-
-
-
-
-
-
+    pass
 
 
 

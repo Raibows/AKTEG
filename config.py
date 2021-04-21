@@ -23,6 +23,13 @@ class config_zhihu_dataset:
     pretrained_wv_dim = 300
     essay_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_essay.wv'
     topic_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_topic.wv'
+    memory_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_memory.wv'
+    topic_synonym_normal_num = 20
+    topic_synonym_max_num = topic_synonym_normal_num * topic_padding_num
+    memory_special_tokens = {'oov': 0}
+    topic_2_mems_corpus_path = './zhihu_dataset/train_dataset.memory'
+    mem2idx_and_idx2mem_path = './zhihu_dataset/train_dataset.memory.dict'
+
 
 
 class config_seq2seq:

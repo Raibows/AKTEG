@@ -3,6 +3,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
 import shutil
+import torch
 
 
 
@@ -55,3 +56,16 @@ def tools_make_dir(path):
 
 def tools_copy_file(source_path, target_path):
     shutil.copy(source_path, target_path)
+
+def tools_to_gpu(*params, device=torch.device('cpu')):
+    return [p.to(device) for p in params]
+
+def tools_save_pickle_obj(obj, path):
+    import pickle
+    with open(path, 'wb') as file:
+        pickle.dump(obj, file)
+
+def tools_load_pickle_obj(path):
+    import pickle
+    with open(path, 'rb') as file:
+        return pickle.load(file)
