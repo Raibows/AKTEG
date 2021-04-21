@@ -7,7 +7,8 @@ from torch.utils.data import DataLoader
 from data import ZHIHU_dataset
 from neural import Encoder, Decoder, Seq2Seq
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed, tools_k_fold_split
+    tools_setup_seed
+from split_data import k_fold_split
 from config import config_zhihu_dataset, config_train, config_seq2seq
 
 
@@ -54,12 +55,7 @@ def train(train_all_dataset, dataset_loader):
     loss_mean = 0.0
     teacher_force_ratio = config_train.train_teacher_force_rate
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
-        for topic, topic_len, essay, essay_len in dataset_loader:
-            temp_sos = torch.full([essay.size(0), 1], train_all_dataset.essay2idx['<sos>'])
-            temp_eos = torch.full([essay.size(0), 1], train_all_dataset.essay2idx['<eos>'])
-            essay_input = torch.cat([temp_sos, essay], dim=1)
-            essay_target = torch.cat([essay, temp_eos], dim=1)
-            essay_len += 1
+        for topic, topic_len, essay_input, essay_target, _ in dataset_loader:
 
             topic, topic_len, essay_input, essay_target = to_gpu(topic, topic_len, essay_input, essay_target, device=device)
 
@@ -85,12 +81,7 @@ def validation(train_all_dataset, dataset_loader):
     teacher_force_ratio = 0.0
     optimizer.zero_grad()
     with tqdm(total=len(dataset_loader), desc='validation') as pbar:
-        for topic, topic_len, essay, essay_len in dataset_loader:
-            temp_sos = torch.full([essay.size(0), 1], train_all_dataset.essay2idx['<sos>'])
-            temp_eos = torch.full([essay.size(0), 1], train_all_dataset.essay2idx['<eos>'])
-            essay_input = torch.cat([temp_sos, essay], dim=1)
-            essay_target = torch.cat([essay, temp_eos], dim=1)
-            essay_len += 1
+        for topic, topic_len, essay_input, essay_target, _ in dataset_loader:
 
             topic, topic_len, essay_input, essay_target = to_gpu(topic, topic_len, essay_input, essay_target,
                                                                  device=device)
@@ -113,7 +104,7 @@ if __name__ == '__main__':
     writer = tools_get_tensorboard_writer()
     best_save_loss = 1e9
     for ep in range(config_train.epoch):
-        kfolds = tools_k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
+        kfolds = k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
         train_loss = 0.0
         valid_loss = 0.0
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):

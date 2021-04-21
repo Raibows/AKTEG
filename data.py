@@ -2,6 +2,7 @@ import copy
 import torch
 from torch.utils.data import Dataset
 from config import config_zhihu_dataset
+from tools import tools_get_logger
 
 
 class ZHIHU_dataset(Dataset):
@@ -20,28 +21,35 @@ class ZHIHU_dataset(Dataset):
         self.len_topics = None
         self.len_essays = None
         self.data_essays = None
+        self.delete_indexs = []
 
         temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
+        self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
+        self.essay_vocab_size = min(self.essay_vocab_size, len(temp_essay2idx))
         if not prior:
             self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
-                                                                            topic_num_limit, self.data_topics)
+                                                                            self.topic_num_limit, self.data_topics)
             self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
-                                                                            essay_vocab_size, self.data_essays)
+                                                                            self.essay_vocab_size, self.data_essays)
         else:
             self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
             self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
         self.__encode_datas()
 
-
+        self.print_info()
 
 
     def __encode_datas(self):
         assert len(self.data_topics) == len(self.data_essays)
         self.len_topics = [0 for _ in self.data_topics]
         self.len_essays = [0 for _ in self.data_essays]
+        essays = {'input':[], 'target': []}
         for i, (t, e) in enumerate(zip(self.data_topics, self.data_essays)):
             self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t, ret_tensor=True)
-            self.data_essays[i], self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
+            ei, et, self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
+            essays['input'].append(ei)
+            essays['target'].append(et)
+        self.data_essays = essays
 
     def __limit_dict_by_frequency(self, reserved, temp2idx, size, datas):
         assert datas and size >= len(reserved)
@@ -73,7 +81,8 @@ class ZHIHU_dataset(Dataset):
             del self.data_essays[d]
             del self.data_topics[d]
         assert len(self.data_essays) == len(self.data_topics)
-        print(f'delete {len(delete_indexs)}')
+        tools_get_logger('data').info(f'delete {len(delete_indexs)}')
+        self.delete_indexs = delete_indexs
         return delete_indexs
 
     def __preprocess(self, sent):
@@ -105,6 +114,8 @@ class ZHIHU_dataset(Dataset):
         self.data_topics = topics
         self.data_essays = labels
 
+        tools_get_logger('data').info(f'read origin data {len(topics)} from {self.path}')
+
         return topic2idx, essay2idx
 
     def convert_idx2essay(self, idxs):
@@ -114,18 +125,26 @@ class ZHIHU_dataset(Dataset):
         return [self.idx2topic[i] for i in idxs]
 
     def convert_essay2idx(self, essay, padding_len=None, ret_tensor=False):
+        # return (essay_input, essay_target, essay_real_len)
+        # essay_input <sos> words <pad>
+        # essay_target words <eos> <pad>
         if padding_len == None:
             padding_len = self.essay_padding_len
-        temp = [self.essay2idx['<pad>'] for _ in range(padding_len)]
-        real_len = min(len(essay), padding_len)
+        temp = [self.essay2idx['<pad>'] for _ in range(padding_len+1)]
+        temp[0] = self.essay2idx['<sos>']
+        real_len = min(len(essay), padding_len - 1)
         for i, one in enumerate(essay[:padding_len]):
             if one not in self.essay2idx:
-                temp[i] = self.essay2idx['<unk>']
+                temp[i+1] = self.essay2idx['<unk>']
             else:
-                temp[i] = self.essay2idx[one]
+                temp[i+1] = self.essay2idx[one]
+        essay_input = temp[:-1]
+        essay_target = temp[1:]
+        essay_target[real_len] = self.essay2idx['<eos>']
         if ret_tensor:
-            return torch.tensor(temp, dtype=torch.int32), torch.tensor(real_len, dtype=torch.int32)
-        return temp, real_len
+            return torch.tensor(essay_input, dtype=torch.int64), torch.tensor(essay_target, dtype=torch.int64), \
+                   torch.tensor(real_len, dtype=torch.int64)
+        return essay_input, essay_target, real_len
 
     def convert_topic2idx(self, topic, padding_num=None, ret_tensor=False):
         if padding_num == None:
@@ -138,22 +157,40 @@ class ZHIHU_dataset(Dataset):
             else:
                 temp[i] = self.topic2idx[one]
         if ret_tensor:
-            return torch.tensor(temp, dtype=torch.int32), torch.tensor(real_num, dtype=torch.int32)
+            return torch.tensor(temp, dtype=torch.int64), torch.tensor(real_num, dtype=torch.int64)
         return temp, real_num
+
+    def print_info(self):
+        tools_get_logger('data').info(
+            f"data_num {len(self)} topic_num/topic_num_limit {len(self.topic2idx)}/{self.topic_num_limit} \n"
+            f"essay_vocab/essay_vocab_limit {len(self.essay2idx)}/{self.essay_vocab_size} \n"
+            f"topic_pad_num {self.topic_padding_num} essay_padding_len {self.essay_padding_len} \n"
+            f"delete_num {len(self.delete_indexs)}"
+        )
 
     def __len__(self):
         return len(self.data_topics)
 
     def __getitem__(self, item):
-        return (self.data_topics[item], self.len_topics[item], self.data_essays[item], self.len_essays[item])
+        return (self.data_topics[item], self.len_topics[item],
+                self.data_essays['input'][item], self.data_essays['target'][item], self.len_essays[item])
 
     def __setitem__(self, key, value):
-        self.data_topics[key], self.len_topics[key], self.data_essays[key], self.len_essays[key] = value
+        self.data_topics[key], self.len_topics[key], self.data_essays['input'][key], \
+        self.data_essays['target'][key], self.len_essays[key] = value
 
 
 
 if __name__ == '__main__':
-    train_dataset = ZHIHU_dataset('../data/zhihu.txt', 103, 50004, 4, 5, 100)
+    # essay_special_tokens = {'<pad>': 0, '<sos>': 1, '<eos>': 2, '<unk>': 3, }
+    from config import config_zhihu_dataset as c
+    all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
+                                c.topic_padding_num, c.essay_padding_len)
+    sentence = ['你', '好', '啊']
+    ei, et, real = all_dataset.convert_essay2idx(sentence, padding_len=5)
+    print(ei)
+    print(et)
+    print(real)
 
 
 
