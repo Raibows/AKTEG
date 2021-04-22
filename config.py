@@ -41,6 +41,6 @@ class config_seq2seq:
     encoder_lstm_is_bid = True
 
     decoder_embed_size = 300
-    decoder_lstm_layer_num = 2
+    decoder_lstm_layer_num = encoder_lstm_layer_num
 
     teacher_force_rate = 0.75

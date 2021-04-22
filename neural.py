@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from tools import tools_load_pickle_obj
 
 class Encoder(nn.Module):
@@ -21,7 +20,7 @@ class Encoder(nn.Module):
     def forward(self, *inputs):
         # (sen, sen_len)
         embeddings = self.embedding_layer(inputs[0].permute(1, 0))
-        embeddings = F.relu(embeddings)
+        embeddings = torch.relu(embeddings)
 
         sort = torch.sort(inputs[1], descending=True)
         sent_len_sort, idx_sort = sort.values, sort.indices
@@ -63,13 +62,39 @@ class Decoder(nn.Module):
         if single_word.dim() == 1:
             single_word = single_word.unsqueeze(1)
         embeddings = self.embedding_layer(single_word.permute(1, 0))
-        embeddings = F.relu(embeddings)
+        embeddings = torch.relu(embeddings)
 
         outs, (h, c) = self.lstm(embeddings, (init_h, init_c))
 
         logits = self.fc(outs.squeeze(0))
 
         return logits, (h, c)
+
+class Memory_neural(nn.Module):
+    def __init__(self, vocab_size, embed_size, decoder_hidden_size, pretrained_path):
+        super(Memory_neural, self).__init__()
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        if pretrained_path:
+            self.embedding_layer.from_pretrained(
+                torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float)
+            )
+        self.embedding_layer.weight.requires_grad = True
+        self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, decoder_hidden_s_t_1, mems):
+        mems = mems.permute(1, 0)
+        embeddings = self.embedding_layer(mems).permute(1, 0, 2)
+        embeddings = self.dropout(embeddings)
+        # embeddings [batch, len, embed_size]
+        v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
+        # torch.bmm()
+        # v_t here is a column vector
+        q_t = torch.softmax(embeddings @ v_t.unsqueeze(2), dim=1)
+        # q_t here is a column vector
+        m_t = q_t.permute(0, 2, 1) @ embeddings
+
+        return m_t
 
 
 class Seq2Seq(nn.Module):
@@ -111,24 +136,34 @@ class Seq2Seq(nn.Module):
 if __name__ == '__main__':
     word_num = 100
     maxlen = 5
-    batch_size = 1
+    batch_size = 64
     word_dim = 300
     num_hidden = 200
 
-    sentence = torch.tensor([[0, 1, 2, 3, 4]], dtype=torch.long)
-    sentence_len = torch.randint(1, maxlen, size=[batch_size], dtype=torch.long)
+    # sentence = torch.tensor([[0, 1, 2, 3, 4]], dtype=torch.long)
+    # sentence_len = torch.randint(1, maxlen, size=[batch_size], dtype=torch.long)
+    #
+    #
+    # encoder = Encoder(word_num, embed_size=word_dim, layer_num=2, hidden_size=num_hidden, is_bid=True)
+    # # h, c = encoder(sentence, sentence_len)
+    #
+    # decoder = Decoder(word_num, word_dim, 2, encoder.output_size)
+    #
+    # # logits = decoder((sentence, sentence_len), h, c)
+    #
+    # seq2seq = Seq2Seq(encoder, decoder, word_num, torch.device('cpu'))
+    #
+    # seq2seq.forward((sentence, sentence_len), sentence)
+    decoder_hidden_size = 100
+    mem_per_sample = 20
+    mems = torch.randint(0, word_num, [batch_size, mem_per_sample])
+    memory_neural = Memory_neural(word_num, word_dim, decoder_hidden_size, None)
+    decoder_hidden = torch.rand([batch_size, decoder_hidden_size])
 
+    m_t = memory_neural.forward(decoder_hidden, mems)
 
-    encoder = Encoder(word_num, embed_size=word_dim, layer_num=2, hidden_size=num_hidden, is_bid=True)
-    # h, c = encoder(sentence, sentence_len)
+    print(m_t.shape)
 
-    decoder = Decoder(word_num, word_dim, 2, encoder.output_size)
-
-    # logits = decoder((sentence, sentence_len), h, c)
-
-    seq2seq = Seq2Seq(encoder, decoder, word_num, torch.device('cpu'))
-
-    seq2seq.forward((sentence, sentence_len), sentence)
 
 
     pass
