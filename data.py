@@ -1,7 +1,7 @@
 import copy
 import torch
 from torch.utils.data import Dataset
-from config import config_zhihu_dataset
+from config import config_zhihu_dataset, config_concepnet
 from tools import tools_get_logger
 from tools import tools_load_pickle_obj
 
@@ -27,19 +27,22 @@ class ZHIHU_dataset(Dataset):
         self.mem2idx = None
         self.idx2mem = None
         self.memory_corpus = None
-        self.topic_synonym_normal_num = config_zhihu_dataset.topic_synonym_normal_num
-        self.topic_synonym_max_num = config_zhihu_dataset.topic_synonym_max_num
+        self.topic_synonym_normal_num = config_zhihu_dataset.topic_mem_normal_num
+        self.topic_synonym_max_num = config_zhihu_dataset.topic_mem_max_num
 
-        temp_topic2idx, temp_essay2idx = self.__read_datas(essay_special_tokens, topic_special_tokens)
+        temp_topic2idx, temp_essay2idx, self.data_topics, self.data_essays = \
+            self.__read_datas(essay_special_tokens, topic_special_tokens)
+
         self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
         self.essay_vocab_size = min(self.essay_vocab_size, len(temp_essay2idx))
+
         if not prior:
             self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
                                                                             self.topic_num_limit, self.data_topics)
             self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
                                                                             self.essay_vocab_size, self.data_essays)
-            self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_zhihu_dataset.mem2idx_and_idx2mem_path)
-            self.memory_corpus = tools_load_pickle_obj(config_zhihu_dataset.topic_2_mems_corpus_path)
+            self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
+            self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)
         else:
             self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
             self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
@@ -107,7 +110,7 @@ class ZHIHU_dataset(Dataset):
 
     def __read_datas(self, essay2idx, topic2idx):
         topics = []
-        labels = []
+        essays = []
         essay2idx = copy.deepcopy(essay2idx)
         topic2idx = copy.deepcopy(topic2idx)
         with open(self.path, 'r', encoding='utf-8') as file:
@@ -117,19 +120,18 @@ class ZHIHU_dataset(Dataset):
                 temp = self.__preprocess(line[0])
                 for l in temp:
                     if l not in essay2idx: essay2idx[l] = len(essay2idx)
-                labels.append(temp)
+                essays.append(temp)
                 # process the topics
                 temp = self.__preprocess(line[1])
                 for t in temp:
                     if t not in topic2idx: topic2idx[t] = len(topic2idx)
                 topics.append(temp)
 
-        self.data_topics = topics
-        self.data_essays = labels
+
 
         tools_get_logger('data').info(f'read origin data {len(topics)} from {self.path}')
 
-        return topic2idx, essay2idx
+        return topic2idx, essay2idx, topics, essays
 
     def convert_idx2essay(self, idxs):
         return [self.idx2essay[i] for i in idxs]

@@ -6,6 +6,15 @@ class config_train:
     learning_rate = 1e-3
     fold_k = 5
 
+class config_concepnet:
+    raw_path = './concepnet/chineseconceptnet.csv'
+    reserved_data_path = './concepnet/reserved.dict.pkl'
+    memory_preprocess_wv_path = './concepnet/zhihu.pretrained.train_memory.wv'
+    topic_2_mems_corpus_path = './concepnet/train_dataset.memory'
+    mem2idx_and_idx2mem_path = './concepnet/train_dataset.memory.dict'
+    memory_special_tokens = {'oov': 0}
+
+
 class config_zhihu_dataset:
     device_name = 'cuda:0'
     raw_data_path = './zhihu_dataset/raw.txt'
@@ -23,12 +32,10 @@ class config_zhihu_dataset:
     pretrained_wv_dim = 300
     essay_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_essay.wv'
     topic_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_topic.wv'
-    memory_preprocess_wv_path = './zhihu_dataset/zhihu.pretrained.train_memory.wv'
-    topic_synonym_normal_num = 20
-    topic_synonym_max_num = topic_synonym_normal_num * topic_padding_num
-    memory_special_tokens = {'oov': 0}
-    topic_2_mems_corpus_path = './zhihu_dataset/train_dataset.memory'
-    mem2idx_and_idx2mem_path = './zhihu_dataset/train_dataset.memory.dict'
+    topic_mem_normal_num = 20
+    topic_mem_max_num = topic_mem_normal_num * topic_padding_num
+
+
 
 
 

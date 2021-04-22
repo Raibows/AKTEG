@@ -85,41 +85,57 @@ def preprocess_topic_and_essay_dict_pretrained_wv():
     wv_essay = process_word_dict_and_pretrained_wv(train_all_dataset.essay2idx, pretrained_wv, c.pretrained_wv_dim)
     tools_save_pickle_obj(wv_essay, c.essay_preprocess_wv_path)
 
-def build_synonyms_table():
+def build_commonsense_memory():
     from data import ZHIHU_dataset
-    from config import config_zhihu_dataset as c
+    from config import config_zhihu_dataset as cz
+    from config import config_concepnet as cc
+    import random
     import synonyms
-    from tools import tools_save_pickle_obj
-    train_all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                      c.topic_padding_num, c.essay_padding_len)
-    pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path)
-    topic_synonyms_corpus = [['<oov>' for i in range(c.topic_synonym_max_num)] for j in range(train_all_dataset.topic_num_limit)]
+    from tools import tools_save_pickle_obj, tools_load_pickle_obj, tools_setup_seed
+
+    tools_setup_seed(667)
+    train_all_dataset = ZHIHU_dataset(cz.train_data_path, cz.topic_num_limit, cz.essay_vocab_size, cz.topic_threshold,
+                                      cz.topic_padding_num, cz.essay_padding_len)
+    pretrained_wv = read_pretrained_word_vectors(cz.pretrained_wv_path)
+    concepnet_dict = tools_load_pickle_obj(cc.reserved_data_path)
+    topic_memory_corpus = [['<oov>' for i in range(cz.topic_mem_max_num)] for j in range(train_all_dataset.topic_num_limit)]
+
     for k, v in train_all_dataset.topic2idx.items():
-        # multiply 2 is to make sure having enough synonyms in pretrained_wv
-        temp = synonyms.nearby(k, c.topic_synonym_max_num * 2)[0]
-        i = 0
+        synonym_add_num = cz.topic_mem_max_num
+        if k in concepnet_dict:
+            candidates = concepnet_dict[k]
+            if len(candidates) > cz.topic_mem_max_num:
+                candidates = random.sample(candidates, k=cz.topic_mem_max_num)
+            for ii, one in enumerate(candidates): topic_memory_corpus[v][ii] = one
+            synonym_add_num -= len(candidates)
+
+        if synonym_add_num <= 0: continue
+        # let synonyms to replenish to max_num
+        # multiply by 2 is to make sure having enough synonyms in pretrained_wv
+        temp = synonyms.nearby(k, synonym_add_num * 2)[0]
+        i = cz.topic_mem_max_num - synonym_add_num
         flag = 0
         for j, one in enumerate(temp):
             if one in pretrained_wv:
-                topic_synonyms_corpus[v][i] = one
+                topic_memory_corpus[v][i] = one
                 i += 1
                 flag = j
-            if i >= c.topic_synonym_max_num: break
+            if i >= cz.topic_mem_max_num: break
         flag += 1
-        while i < c.topic_synonym_max_num and flag < len(temp):
-            topic_synonyms_corpus[v][i] = temp[flag]
+        while i < cz.topic_mem_max_num and flag < len(temp):
+            topic_memory_corpus[v][i] = temp[flag]
             i += 1
             flag += 1
-    mem2idx = c.memory_special_tokens
-    for line in topic_synonyms_corpus:
+    mem2idx = cc.memory_special_tokens
+    for line in topic_memory_corpus:
         for one in line:
             if one not in mem2idx:
                 mem2idx[one] = len(mem2idx)
     idx2mem = {v:k for k, v in mem2idx.items()}
-    wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, c.pretrained_wv_dim)
-    tools_save_pickle_obj(wv_mem, c.memory_preprocess_wv_path)
-    tools_save_pickle_obj((mem2idx, idx2mem), c.mem2idx_and_idx2mem_path)
-    tools_save_pickle_obj(topic_synonyms_corpus, c.topic_2_mems_corpus_path)
+    wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, cz.pretrained_wv_dim)
+    tools_save_pickle_obj(wv_mem, cc.memory_preprocess_wv_path)
+    tools_save_pickle_obj((mem2idx, idx2mem), cc.mem2idx_and_idx2mem_path)
+    tools_save_pickle_obj(topic_memory_corpus, cc.topic_2_mems_corpus_path)
 
 def split_train_test_set():
     from data import ZHIHU_dataset
@@ -138,9 +154,42 @@ def split_train_test_set():
                                    f'test / train is {len(test_datas)/len(train_datas):.4f} '
                                    f'test / (train+test) is {len(test_datas)/len(all):.4f}')
 
+def preprocess_concepnet():
+    from config import config_concepnet as c
+    from tools import tools_get_logger, tools_save_pickle_obj
+    from zhconv import convert
+    import re
+
+    with open(c.raw_path, 'r', encoding='utf-8') as file:
+        total = 0
+        pattern = "[^\u4e00-\u9fa5]"
+        reserved = {}
+        for i, line in enumerate(file):
+            total += 1
+            line = line.split('\t')
+            src = line[2]
+            tar = line[3]
+            if (not src.startswith('/c/zh/')) or (not tar.startswith('/c/zh/')): continue
+            src = convert(src[6:], locale='zh-cn')
+            tar = convert(tar[6:], locale='zh-cn')
+            src = re.sub(pattern, "", src)
+            tar = re.sub(pattern, "", tar)
+            if src not in reserved:
+                reserved[src] = set()
+            reserved[src].add(tar)
+    reserved = {k: list(v) for k, v in reserved.items()}
+    num = sum([len(t) for t in reserved.values()])
+    tools_get_logger('preprocess').info(f"read concepnet from {c.raw_path} reserved/total {num}/{total} \n"
+                                        f"reserved is writing to {c.reserved_data_path}")
+
+    # {word: [syn1, syn2, syn3...], word2: [...]}
+    tools_save_pickle_obj(reserved, c.reserved_data_path)
+
 
 
 if __name__ == '__main__':
-    split_train_test_set()
-    preprocess_topic_and_essay_dict_pretrained_wv()
-    build_synonyms_table()
+    # split_train_test_set()
+    # preprocess_topic_and_essay_dict_pretrained_wv()
+    # preprocess_concepnet()
+    build_commonsense_memory()
+    pass
