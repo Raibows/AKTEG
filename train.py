@@ -5,16 +5,16 @@ from tqdm import tqdm
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from data import ZHIHU_dataset
-from neural import Encoder, Decoder, Seq2Seq
+from neural import Encoder, Decoder, Seq2Seq, Memory_neural
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
-from config import config_zhihu_dataset, config_train, config_seq2seq
+from config import config_zhihu_dataset, config_train, config_seq2seq, config_concepnet
 
 
 tools_setup_seed(667)
 
-device = torch.device(config_zhihu_dataset.device_name)
+device = torch.device(config_train.device_name)
 
 train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                   topic_num_limit=config_zhihu_dataset.topic_num_limit,
@@ -51,10 +51,22 @@ encoder = Encoder(vocab_size=train_all_dataset.topic_num_limit,
 decoder = Decoder(vocab_size=train_all_dataset.essay_vocab_size,
                   embed_size=config_seq2seq.decoder_embed_size,
                   layer_num=config_seq2seq.decoder_lstm_layer_num,
-                  hidden_size=encoder.output_size,
+                  encoder_output_size=encoder.output_size,
+                  memory_neural_embed_size=config_seq2seq.memory_embed_size,
                   pretrained_path=config_zhihu_dataset.essay_preprocess_wv_path)
 
-seq2seq = Seq2Seq(encoder, decoder, train_all_dataset.essay_vocab_size, device)
+memory_neural = Memory_neural(vocab_size=train_all_dataset.mem_vocab_size,
+                              embed_size=config_seq2seq.memory_embed_size,
+                              decoder_hidden_size=decoder.hidden_size,
+                              pretrained_path=config_concepnet.memory_pretrained_wv_path)
+
+seq2seq = Seq2Seq(encoder=encoder,
+                  decoder=decoder,
+                  memory_neural=memory_neural,
+                  topic_padding_num=train_all_dataset.topic_padding_num,
+                  essay_vocab_size=train_all_dataset.essay_vocab_size,
+                  attention_size=config_seq2seq.attention_size,
+                  device=device)
 seq2seq.to(device)
 
 optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
@@ -70,12 +82,12 @@ def train(train_all_dataset, dataset_loader):
     loss_mean = 0.0
     teacher_force_ratio = config_seq2seq.teacher_force_rate
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
-        for topic, topic_len, mems, essay_input, essay_target, _ in dataset_loader:
-
+        for i, topic, topic_len, mems, essay_input, essay_target, _ in enumerate(dataset_loader):
+            # if i == 100: break
             topic, topic_len, mems, essay_input, essay_target = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
-            logits = seq2seq.forward((topic, topic_len), essay_input, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward((topic, topic_len), essay_input, mems, teacher_force_ratio=teacher_force_ratio)
 
             essay_target = essay_target.view(-1)
             logits = logits.view(-1, train_all_dataset.essay_vocab_size)
@@ -102,7 +114,7 @@ def validation(train_all_dataset, dataset_loader):
             topic, topic_len, mems, essay_input, essay_target = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
-            logits = seq2seq.forward((topic, topic_len), essay_input, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward((topic, topic_len), essay_input, mems=mems, teacher_force_ratio=teacher_force_ratio)
 
             essay_target = essay_target.view(-1)
             logits = logits.view(-1, train_all_dataset.essay_vocab_size)

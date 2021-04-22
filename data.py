@@ -49,6 +49,8 @@ class ZHIHU_dataset(Dataset):
             self.mem2idx, self.idx2mem = prior['mem2idx'], prior['idx2mem']
             self.memory_corpus = prior['memory_corpus']
 
+        self.mem_vocab_size = len(self.mem2idx)
+
         self.__encode_datas()
         self.print_info()
 

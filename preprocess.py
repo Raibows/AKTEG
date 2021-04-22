@@ -27,6 +27,7 @@ def k_fold_split(all_dataset, batch_size, k=5):
     import random
     import torch
     from torch.utils.data import DataLoader
+    from config import config_train
     all_size = len(all_dataset)
     fold_size = [all_size // k] * (k-1) + [all_size - (all_size // k) * (k-1)]
     all_set = set([i for i in range(all_size)])
@@ -41,7 +42,7 @@ def k_fold_split(all_dataset, batch_size, k=5):
         test = torch.utils.data.dataset.Subset(all_dataset, list(fs))
         train = torch.utils.data.dataset.Subset(all_dataset, list(all_set-fs))
         kfolds.append((
-            DataLoader(train, batch_size=batch_size),
+            DataLoader(train, batch_size=batch_size, num_workers=config_train.train_dataloader_num_workers),
             DataLoader(test, batch_size=batch_size)
         ))
     return kfolds
@@ -133,7 +134,7 @@ def build_commonsense_memory():
                 mem2idx[one] = len(mem2idx)
     idx2mem = {v:k for k, v in mem2idx.items()}
     wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, cz.pretrained_wv_dim)
-    tools_save_pickle_obj(wv_mem, cc.memory_preprocess_wv_path)
+    tools_save_pickle_obj(wv_mem, cc.memory_pretrained_wv_path)
     tools_save_pickle_obj((mem2idx, idx2mem), cc.mem2idx_and_idx2mem_path)
     tools_save_pickle_obj(topic_memory_corpus, cc.topic_2_mems_corpus_path)
 

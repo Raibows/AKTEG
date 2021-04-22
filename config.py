@@ -1,22 +1,23 @@
 
 
 class config_train:
-    epoch = 30
+    device_name = 'cuda:3'
+    epoch = 1
     batch_size = 64
     learning_rate = 1e-3
     fold_k = 5
+    train_dataloader_num_workers = 4
 
 class config_concepnet:
     raw_path = './concepnet/chineseconceptnet.csv'
     reserved_data_path = './concepnet/reserved.dict.pkl'
-    memory_preprocess_wv_path = './concepnet/zhihu.pretrained.train_memory.wv'
+    memory_pretrained_wv_path = './concepnet/zhihu.pretrained.train_memory.wv'
     topic_2_mems_corpus_path = './concepnet/train_dataset.memory'
     mem2idx_and_idx2mem_path = './concepnet/train_dataset.memory.dict'
     memory_special_tokens = {'oov': 0}
 
 
 class config_zhihu_dataset:
-    device_name = 'cuda:0'
     raw_data_path = './zhihu_dataset/raw.txt'
     train_data_path = './zhihu_dataset/train.txt'
     test_data_path = './zhihu_dataset/test.txt'
@@ -36,9 +37,6 @@ class config_zhihu_dataset:
     topic_mem_max_num = topic_mem_normal_num * topic_padding_num
 
 
-
-
-
 class config_seq2seq:
     model_save_fmt = './results/seq2seq/{}/test_loss{:.5f}.pt'
     model_load_path = None
@@ -50,4 +48,8 @@ class config_seq2seq:
     decoder_embed_size = 300
     decoder_lstm_layer_num = encoder_lstm_layer_num
 
+    # memory_vocab_size = 5936
+    memory_embed_size = 300
+
+    attention_size = 128
     teacher_force_rate = 0.75
