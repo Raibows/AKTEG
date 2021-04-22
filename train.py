@@ -39,7 +39,7 @@ test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
 
 test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size)
 
-tools_get_logger('data').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
+tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
 
 encoder = Encoder(vocab_size=train_all_dataset.topic_num_limit,
                   embed_size=config_seq2seq.encoder_embed_size,
