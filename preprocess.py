@@ -58,17 +58,18 @@ def k_fold_split(all_dataset, batch_size, k=5):
     return kfolds
 
 
-def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_dim: int):
+def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_dim: int, unk_val='gaussian'):
     from tools import tools_setup_seed
     import random
     tools_setup_seed(667)
-    wv = [[0.0 for _ in range(wv_dim)] for i in word_dict]
+    if unk_val == 'gaussian':
+        wv = [[random.normalvariate(0, 0.3) for _ in range(wv_dim)] for _ in range(wv_dim)]
+    else:
+        wv = [[unk_val for _ in range(wv_dim)] for i in word_dict]
     unk_num = 0
     for k, v in word_dict.items():
         if k in pretrained_wv: wv[v] = pretrained_wv[k]
-        else:
-            unk_num += 1
-            wv[v] = [random.normalvariate(0, 0.3) for _ in range(wv_dim)]
+        else: unk_num += 1
     print(f'unk_num {unk_num} finding {len(word_dict)-unk_num} all {len(word_dict)}')
     return wv
 
@@ -145,7 +146,7 @@ def build_commonsense_memory():
             if one not in mem2idx:
                 mem2idx[one] = len(mem2idx)
     idx2mem = {v:k for k, v in mem2idx.items()}
-    wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, cz.pretrained_wv_dim)
+    wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, cz.pretrained_wv_dim, unk_val=0.0)
     tools_save_pickle_obj(wv_mem, cc.memory_pretrained_wv_path)
     tools_save_pickle_obj((mem2idx, idx2mem), cc.mem2idx_and_idx2mem_path)
     tools_save_pickle_obj(topic_memory_corpus, cc.topic_2_mems_corpus_path)

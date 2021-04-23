@@ -59,6 +59,7 @@ decoder = Decoder(vocab_size=train_all_dataset.essay_vocab_size,
 memory_neural = Memory_neural(vocab_size=train_all_dataset.mem_vocab_size,
                               embed_size=config_seq2seq.memory_embed_size,
                               decoder_hidden_size=decoder.hidden_size,
+                              decoder_embed_size=decoder.embed_size,
                               pretrained_path=config_concepnet.memory_pretrained_wv_path)
 
 seq2seq = Seq2Seq(encoder=encoder,
