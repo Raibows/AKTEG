@@ -10,7 +10,7 @@ class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens=config_zhihu_dataset.topic_special_tokens,
                  essay_special_tokens=config_zhihu_dataset.essay_special_tokens,
-                 prior=None, load_mems=True, to_tensor=True, data_load_limit_num=-1):
+                 prior=None, load_mems=True, to_tensor=True):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -32,7 +32,7 @@ class ZHIHU_dataset(Dataset):
         self.topic_mem_max_num = config_zhihu_dataset.topic_mem_max_num
 
         temp_topic2idx, temp_essay2idx, self.data_topics, self.data_essays = \
-            self.__read_datas(essay_special_tokens, topic_special_tokens, data_load_limit_num)
+            self.__read_datas(essay_special_tokens, topic_special_tokens)
 
         self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
         self.essay_vocab_size = min(self.essay_vocab_size, len(temp_essay2idx))
