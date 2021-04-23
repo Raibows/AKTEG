@@ -37,7 +37,8 @@ test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
                                         'idx2mem': train_all_dataset.idx2mem,
                                         'memory_corpus': train_all_dataset.memory_corpus})
 
-test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size)
+test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size,
+                                 num_workers=config_train.dataloader_num_workers, pin_memory=True)
 
 tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
 
@@ -82,8 +83,7 @@ def train(train_all_dataset, dataset_loader):
     loss_mean = 0.0
     teacher_force_ratio = config_seq2seq.teacher_force_rate
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
-        for i, topic, topic_len, mems, essay_input, essay_target, _ in enumerate(dataset_loader):
-            # if i == 100: break
+        for topic, topic_len, mems, essay_input, essay_target, _ in dataset_loader:
             topic, topic_len, mems, essay_input, essay_target = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
@@ -136,17 +136,19 @@ if __name__ == '__main__':
         kfolds = k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
         train_loss = 0.0
         valid_loss = 0.0
+        valid_loss_t = 0.0
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):
             train_loss_t = train(train_all_dataset, train_dataloader)
-            valid_loss_t = validation(train_all_dataset, valid_dataloader)
+            if valid_dataloader:
+                valid_loss_t = validation(train_all_dataset, valid_dataloader)
+                valid_loss += valid_loss_t
             train_loss += train_loss_t
-            valid_loss += valid_loss_t
             tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
         test_loss = validation(train_all_dataset, test_all_dataloader)
         scheduler.step(test_loss)
-        warmup_scheduler.step(ep)
+        warmup_scheduler.step()
 
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)

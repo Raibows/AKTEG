@@ -24,6 +24,12 @@ def split_line_like_datas(datas, split_ratio):
 
 
 def k_fold_split(all_dataset, batch_size, k=5):
+    """
+    if k==1, then all_dataset will set to train_dataset, and corresponding validation_dataset is set to None
+    else
+    every fold contains a different
+    validation_dataset with size (num_all // k) and a train_dataset with size (num_all - num_all // k)
+    """
     import random
     import torch
     from torch.utils.data import DataLoader
@@ -39,11 +45,15 @@ def k_fold_split(all_dataset, batch_size, k=5):
     all_set = set([i for i in range(all_size)])
     kfolds = []
     for fs in fold_size:
+        if k == 1:
+            kfolds.append((DataLoader(all_dataset, config_train.batch_size, shuffle=True,
+                                      num_workers=config_train.dataloader_num_workers, pin_memory=True), None))
+            return kfolds
         test = torch.utils.data.dataset.Subset(all_dataset, list(fs))
         train = torch.utils.data.dataset.Subset(all_dataset, list(all_set-fs))
         kfolds.append((
-            DataLoader(train, batch_size=batch_size, num_workers=config_train.train_dataloader_num_workers),
-            DataLoader(test, batch_size=batch_size)
+            DataLoader(train, batch_size=batch_size, num_workers=config_train.dataloader_num_workers, pin_memory=True),
+            DataLoader(test, batch_size=batch_size, num_workers=config_train.dataloader_num_workers, pin_memory=True)
         ))
     return kfolds
 

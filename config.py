@@ -2,11 +2,11 @@
 
 class config_train:
     device_name = 'cuda:3'
-    epoch = 1
-    batch_size = 64
+    epoch = 10
+    batch_size = 128
     learning_rate = 1e-3
-    fold_k = 5
-    train_dataloader_num_workers = 4
+    fold_k = 1
+    dataloader_num_workers = 4
 
 class config_concepnet:
     raw_path = './concepnet/chineseconceptnet.csv'
