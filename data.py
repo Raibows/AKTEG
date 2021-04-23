@@ -97,7 +97,7 @@ class ZHIHU_dataset(Dataset):
         for i, one in enumerate(self.data_topics):
             cnt = 0
             for t in one:
-                cnt += (t in self.essay2idx)
+                cnt += (t in self.topic2idx)
             if cnt < self.topic_threshold:
                 delete_indexs.append(i)
 
