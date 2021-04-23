@@ -156,7 +156,7 @@ def split_train_test_set():
     from config import config_zhihu_dataset as c
     from tools import tools_get_logger
     all_dataset = ZHIHU_dataset(c.raw_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                c.topic_padding_num, c.essay_padding_len)
+                                c.topic_padding_num, c.essay_padding_len, load_mems=False, to_tensor=False)
     delete_indexs = all_dataset.limit_datas()
     datas = read_line_like_file(c.raw_data_path)
     all = set([i for i in range(len(datas))]) - set(delete_indexs)
@@ -202,8 +202,8 @@ def preprocess_concepnet():
 
 
 if __name__ == '__main__':
-    # split_train_test_set()
+    split_train_test_set()
     # preprocess_topic_and_essay_dict_pretrained_wv()
     # preprocess_concepnet()
-    build_commonsense_memory()
+    # build_commonsense_memory()
     pass
