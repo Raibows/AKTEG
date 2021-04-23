@@ -13,14 +13,15 @@ class Encoder(nn.Module):
                 torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float)
             )
         self.embedding_layer.weight.requires_grad = True
-        self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid)
+        self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid, dropout=0.5)
         self.direction = 2 if is_bid else 1
         self.output_size = self.direction * self.hidden_size
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, *inputs):
         # (sen, sen_len)
         embeddings = self.embedding_layer(inputs[0].permute(1, 0))
-        embeddings = torch.relu(embeddings)
+        embeddings = self.dropout(embeddings)
 
         sort = torch.sort(inputs[1], descending=True)
         sent_len_sort, idx_sort = sort.values, sort.indices
@@ -56,14 +57,17 @@ class Decoder(nn.Module):
         self.layer_num = layer_num
         self.embed_size = embed_size
         self.hidden_size = encoder_output_size
-        self.lstm = nn.LSTM(self.input_size, encoder_output_size, layer_num, bidirectional=False)
+        self.lstm = nn.LSTM(self.input_size, encoder_output_size, layer_num, bidirectional=False, dropout=0.5)
         self.fc = nn.Linear(encoder_output_size, vocab_size)
+        self.dropout = nn.Dropout(0.5)
+
 
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
 
         logits = self.fc(outs.squeeze(0))
+        logits = self.dropout(logits)
 
         return logits, (h, c)
 
@@ -98,15 +102,16 @@ class Memory_neural(nn.Module):
         decoder_embeddings = decoder_embeddings.squeeze()
         batch_size = self.step_mem_embeddings.shape[0]
         seq_len = self.step_mem_embeddings.shape[1]
-        M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
-                   + self.V1(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
+        M_t_temp = self.dropout(self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1)) \
+                   + self.dropout(self.V1(decoder_embeddings).reshape(batch_size, 1, self.embed_size))
         M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
 
-        gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
-                   + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
+        gate = self.dropout(self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1)) \
+                   + self.dropout(self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size))
         gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
 
         self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings * (1 - gate)
+        self.step_mem_embeddings = self.dropout(self.step_mem_embeddings)
 
 
     def forward(self, decoder_hidden_s_t_1, mems):
@@ -118,9 +123,9 @@ class Memory_neural(nn.Module):
             # embeddings [batch, len, embed_size]
 
 
-        v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
+        v_t = torch.tanh(self.dropout(self.W(decoder_hidden_s_t_1)))
         # v_t here is a column vector [batch, v_t] using torch.batch_multiplication
-        q_t = torch.softmax(self.step_mem_embeddings @ v_t.unsqueeze(2), dim=1)
+        q_t = torch.softmax(self.dropout(self.step_mem_embeddings @ v_t.unsqueeze(2)), dim=1)
         # q_t here is a column vector [batch, q_t]
         m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings
 
@@ -135,6 +140,7 @@ class Seq2Seq(nn.Module):
         self.memory_neural = memory_neural
         self.essay_vocab_size = essay_vocab_size
         self.device = device
+        self.dropout = nn.Dropout(0.5)
         self.W_1 = nn.Linear(encoder.output_size, attention_size)
         self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size)
         self.W_3 = nn.Linear(topic_padding_num, topic_padding_num)
@@ -146,7 +152,7 @@ class Seq2Seq(nn.Module):
         if token.dim() == 1:
             token = token.unsqueeze(1)
         embeddings = self.decoder.embedding_layer.forward(token.permute(1, 0))
-        return embeddings
+        return self.dropout(embeddings)
 
     def before_feed_to_decoder(self, last_step_output_token_embeddings, last_step_decoder_lstm_hidden,
                                last_step_decoder_lstm_memory, topics_representations, mems):
@@ -158,11 +164,11 @@ class Seq2Seq(nn.Module):
         # calculate c_{t}
         batch_size = topics_representations.shape[1]
         topic_num = topics_representations.shape[0]
-        pre_t_matrix = self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1))
+        pre_t_matrix = self.dropout(self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1)))
         pre_t_matrix = pre_t_matrix.reshape(batch_size, topic_num, -1)
-        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2)
+        query_t = self.dropout(self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2))
         # query_t [batch, t, 1] for using torch.batch_multiplication
-        e_t_i = self.W_3.forward(torch.tanh(pre_t_matrix @ query_t).squeeze(2))
+        e_t_i = self.dropout(self.W_3.forward(torch.tanh(pre_t_matrix @ query_t).squeeze(2)))
         alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num]
         c_t = topics_representations.reshape(batch_size, -1, topic_num) @ alpha_t_i.unsqueeze(2)
 

@@ -1,6 +1,4 @@
 import torch
-import numpy as np
-import random
 from tqdm import tqdm
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -75,7 +73,7 @@ if config_train.is_load_model:
 seq2seq.to(device)
 seq2seq.eval()
 
-optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
+optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate, weight_decay=0.5)
 criterion = nn.CrossEntropyLoss(ignore_index=train_all_dataset.essay2idx['<pad>']).to(device)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.9, patience=3, min_lr=6e-6)
 warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 3 else 1)
