@@ -106,18 +106,20 @@ def build_commonsense_memory():
 
     tools_setup_seed(667)
     train_all_dataset = ZHIHU_dataset(cz.train_data_path, cz.topic_num_limit, cz.essay_vocab_size, cz.topic_threshold,
-                                      cz.topic_padding_num, cz.essay_padding_len)
+                                      cz.topic_padding_num, cz.essay_padding_len, prior=None, load_mems=False, to_tensor=False)
     pretrained_wv = read_pretrained_word_vectors(cz.pretrained_wv_path)
     concepnet_dict = tools_load_pickle_obj(cc.reserved_data_path)
-    topic_memory_corpus = [['<oov>' for i in range(cz.topic_mem_max_num)] for j in range(train_all_dataset.topic_num_limit)]
+    # topic_memory_corpus = [['<oov>' for i in range(cz.topic_mem_max_num)] for j in range(train_all_dataset.topic_num_limit)]
+    topic_memory_corpus = {} # {topic_word : [list of synonyms...]}
 
     for k, v in train_all_dataset.topic2idx.items():
         synonym_add_num = cz.topic_mem_max_num
+        topic_memory_corpus[k] = ['<oov>' for _ in range(cz.topic_mem_max_num)]
         if k in concepnet_dict:
             candidates = concepnet_dict[k]
             if len(candidates) > cz.topic_mem_max_num:
                 candidates = random.sample(candidates, k=cz.topic_mem_max_num)
-            for ii, one in enumerate(candidates): topic_memory_corpus[v][ii] = one
+            for ii, one in enumerate(candidates): topic_memory_corpus[k][ii] = one
             synonym_add_num -= len(candidates)
 
         if synonym_add_num <= 0: continue
@@ -128,18 +130,18 @@ def build_commonsense_memory():
         flag = 0
         for j, one in enumerate(temp):
             if one in pretrained_wv:
-                topic_memory_corpus[v][i] = one
+                topic_memory_corpus[k][i] = one
                 i += 1
                 flag = j
             if i >= cz.topic_mem_max_num: break
         flag += 1
         while i < cz.topic_mem_max_num and flag < len(temp):
-            topic_memory_corpus[v][i] = temp[flag]
+            topic_memory_corpus[k][i] = temp[flag]
             i += 1
             flag += 1
     mem2idx = cc.memory_special_tokens
-    for line in topic_memory_corpus:
-        for one in line:
+    for k, syns in topic_memory_corpus.items():
+        for one in syns:
             if one not in mem2idx:
                 mem2idx[one] = len(mem2idx)
     idx2mem = {v:k for k, v in mem2idx.items()}

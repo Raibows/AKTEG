@@ -2,6 +2,7 @@
 
 class config_train:
     device_name = 'cuda:3'
+    debug_mode = True
     epoch = 10
     batch_size = 128
     learning_rate = 1e-3

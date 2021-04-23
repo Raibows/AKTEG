@@ -10,7 +10,7 @@ class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens=config_zhihu_dataset.topic_special_tokens,
                  essay_special_tokens=config_zhihu_dataset.essay_special_tokens,
-                 prior=None):
+                 prior=None, load_mems=True, to_tensor=True, data_load_limit_num=-1):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -27,11 +27,12 @@ class ZHIHU_dataset(Dataset):
         self.mem2idx = None
         self.idx2mem = None
         self.memory_corpus = None
-        self.topic_synonym_normal_num = config_zhihu_dataset.topic_mem_normal_num
-        self.topic_synonym_max_num = config_zhihu_dataset.topic_mem_max_num
+        self.load_mems = load_mems
+        self.topic_mem_normal_num = config_zhihu_dataset.topic_mem_normal_num
+        self.topic_mem_max_num = config_zhihu_dataset.topic_mem_max_num
 
         temp_topic2idx, temp_essay2idx, self.data_topics, self.data_essays = \
-            self.__read_datas(essay_special_tokens, topic_special_tokens)
+            self.__read_datas(essay_special_tokens, topic_special_tokens, data_load_limit_num)
 
         self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
         self.essay_vocab_size = min(self.essay_vocab_size, len(temp_essay2idx))
@@ -41,17 +42,18 @@ class ZHIHU_dataset(Dataset):
                                                                             self.topic_num_limit, self.data_topics)
             self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
                                                                             self.essay_vocab_size, self.data_essays)
-            self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
-            self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)
+            if load_mems:
+                self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
+                self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)
         else:
             self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
             self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
-            self.mem2idx, self.idx2mem = prior['mem2idx'], prior['idx2mem']
-            self.memory_corpus = prior['memory_corpus']
+            if load_mems:
+                self.mem2idx, self.idx2mem = prior['mem2idx'], prior['idx2mem']
+                self.memory_corpus = prior['memory_corpus']
 
-        self.mem_vocab_size = len(self.mem2idx)
-
-        self.__encode_datas()
+        self.mem_vocab_size = len(self.mem2idx) if self.load_mems else 0
+        if to_tensor: self.__encode_datas()
         self.print_info()
 
 
@@ -63,7 +65,11 @@ class ZHIHU_dataset(Dataset):
         self.data_mems = [0 for _ in self.data_topics]
         for i, (t, e) in enumerate(zip(self.data_topics, self.data_essays)):
             self.data_topics[i], self.len_topics[i] = self.convert_topic2idx(t, ret_tensor=True)
-            self.data_mems[i] = self.get_mems_by_topics(self.data_topics[i].tolist(), ret_tensor=True)
+            if self.load_mems:
+                # because only convert it to idxs and then reverse it to words
+                # which will let unk_topic_word be encoded to <unk_topic> that memory_corpus knows
+                temp = self.convert_idx2topic(self.data_topics[i].tolist())
+                self.data_mems[i] = self.get_mems_by_topics(temp, ret_tensor=True)
             ei, et, self.len_essays[i] = self.convert_essay2idx(e, ret_tensor=True)
             essays['input'].append(ei)
             essays['target'].append(et)
@@ -110,13 +116,14 @@ class ZHIHU_dataset(Dataset):
                 temp.append(x.strip())
         return temp
 
-    def __read_datas(self, essay2idx, topic2idx):
+    def __read_datas(self, essay2idx, topic2idx, limit_num=-1):
         topics = []
         essays = []
         essay2idx = copy.deepcopy(essay2idx)
         topic2idx = copy.deepcopy(topic2idx)
         with open(self.path, 'r', encoding='utf-8') as file:
-            for line in file:
+            for i, line in enumerate(file):
+                if i == limit_num: break
                 line = line.strip('\n').strip('\r').split('</d>')
                 # process the essay
                 temp = self.__preprocess(line[0])
@@ -149,17 +156,17 @@ class ZHIHU_dataset(Dataset):
         return temp
 
     def get_mems_by_topics(self, topics:list, ret_tensor=False):
-        # topics contains series of topic_idxs
-        mems = ['<oov>' for _ in range(self.topic_synonym_max_num)]
+        # topics contains series of topic_words
+        mems = ['<oov>' for _ in range(self.topic_mem_max_num)]
         has_set = set()
         for t in topics:
             if self.memory_corpus[t][0] != '<oov>':
                 has_set.add(t)
         if len(has_set) != 0:
             mems = []
-            nums = [self.topic_synonym_max_num // len(has_set) for _ in has_set]
-            if self.topic_synonym_max_num % len(has_set) != 0:
-                nums[0] = self.topic_synonym_max_num - sum(nums[1:])
+            nums = [self.topic_mem_max_num // len(has_set) for _ in has_set]
+            if self.topic_mem_max_num % len(has_set) != 0:
+                nums[0] = self.topic_mem_max_num - sum(nums[1:])
             for t, n in zip(has_set, nums):
                 mems.extend(self.memory_corpus[t][:n])
 
@@ -188,7 +195,7 @@ class ZHIHU_dataset(Dataset):
         essay_target[real_len] = self.essay2idx['<eos>']
         if ret_tensor:
             return torch.tensor(essay_input, dtype=torch.int64), torch.tensor(essay_target, dtype=torch.int64), \
-                   torch.tensor(real_len, dtype=torch.int64)
+            torch.tensor(real_len, dtype=torch.int64)
         return essay_input, essay_target, real_len
 
     def convert_topic2idx(self, topic, padding_num=None, ret_tensor=False):
@@ -210,7 +217,8 @@ class ZHIHU_dataset(Dataset):
             f"data_num {len(self)} topic_num/topic_num_limit {len(self.topic2idx)}/{self.topic_num_limit} \n"
             f"essay_vocab/essay_vocab_limit {len(self.essay2idx)}/{self.essay_vocab_size} \n"
             f"topic_pad_num {self.topic_padding_num} essay_padding_len {self.essay_padding_len} \n"
-            f"delete_num {len(self.delete_indexs)}"
+            f"is_load_memory {self.load_mems} mem_num {self.mem_vocab_size} \n"
+            f"data_delete_num {len(self.delete_indexs)}"
         )
 
     def __len__(self):

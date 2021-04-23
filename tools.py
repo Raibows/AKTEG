@@ -62,10 +62,12 @@ def tools_to_gpu(*params, device=torch.device('cpu')):
 
 def tools_save_pickle_obj(obj, path):
     import pickle
+    tools_get_logger('tools').info(f"saving obj_type {type(obj)} to {path}")
     with open(path, 'wb') as file:
         pickle.dump(obj, file)
 
 def tools_load_pickle_obj(path):
     import pickle
+    tools_get_logger('tools').info(f"loading obj from {path}")
     with open(path, 'rb') as file:
         return pickle.load(file)
