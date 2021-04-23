@@ -29,7 +29,7 @@ def tools_get_tensorboard_writer(log_dir=None):
     if not tools_tensorboard_writer_judger:
         tools_tensorboard_writer_judger = True
         writer = SummaryWriter(log_dir=log_dir)
-    return writer
+    return writer, log_dir
 
 
 def tools_get_time():

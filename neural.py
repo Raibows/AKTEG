@@ -208,7 +208,7 @@ class Seq2Seq(nn.Module):
         logits, _ = self.decoder.forward(now_decoder_input, h, c)
         decoder_outputs[-1] = logits
         self.clear_memory_neural_step_state()
-
+        # [essay_len, batch, essay_vocab_size]
         return decoder_outputs
 
 if __name__ == '__main__':

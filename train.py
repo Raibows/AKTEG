@@ -10,6 +10,7 @@ from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train, config_seq2seq, config_concepnet
+from predict import prediction
 
 
 tools_setup_seed(667)
@@ -69,7 +70,10 @@ seq2seq = Seq2Seq(encoder=encoder,
                   essay_vocab_size=train_all_dataset.essay_vocab_size,
                   attention_size=config_seq2seq.attention_size,
                   device=device)
+if config_train.is_load_model:
+    seq2seq.load_state_dict(torch.load(config_seq2seq.model_load_path, map_location=device))
 seq2seq.to(device)
+seq2seq.eval()
 
 optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
 criterion = nn.CrossEntropyLoss(ignore_index=train_all_dataset.essay2idx['<pad>']).to(device)
@@ -130,7 +134,7 @@ def validation(train_all_dataset, dataset_loader):
 
 
 if __name__ == '__main__':
-    writer = tools_get_tensorboard_writer()
+    writer, log_dir = tools_get_tensorboard_writer()
     best_save_loss = 1e9
     # test_loss = validation(train_all_dataset, test_all_dataloader)
     for ep in range(config_train.epoch):
@@ -148,6 +152,8 @@ if __name__ == '__main__':
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
         test_loss = validation(train_all_dataset, test_all_dataloader)
+        prediction(seq2seq, train_all_dataset, test_all_dataloader, device=device,
+                   res_path=f'{log_dir}/epoch_{ep}.test_loss{test_loss}.predictions')
         scheduler.step(test_loss)
         warmup_scheduler.step()
 

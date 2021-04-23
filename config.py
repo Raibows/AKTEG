@@ -1,12 +1,13 @@
 
 
 class config_train:
-    device_name = 'cuda:3'
+    device_name = 'cuda:0'
     epoch = 10
     batch_size = 128
     learning_rate = 1e-3
     fold_k = 1
     dataloader_num_workers = 4
+    is_load_model = False
 
 class config_concepnet:
     raw_path = './concepnet/chineseconceptnet.csv'
@@ -39,7 +40,7 @@ class config_zhihu_dataset:
 
 class config_seq2seq:
     model_save_fmt = './results/seq2seq/{}/test_loss{:.5f}.pt'
-    model_load_path = None
+    model_load_path = './results/seq2seq/21-04-23-12_31_54/test_loss6.84044.pt'
     encoder_embed_size = 300
     encoder_lstm_layer_num = 2
     encoder_lstm_hidden_size = 300
@@ -52,4 +53,4 @@ class config_seq2seq:
     memory_embed_size = 300
 
     attention_size = 128
-    teacher_force_rate = 0.75
+    teacher_force_rate = 1.0
