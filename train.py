@@ -8,7 +8,6 @@ from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train, config_seq2seq, config_concepnet
-from predict import prediction
 
 
 tools_setup_seed(667)
@@ -84,10 +83,9 @@ warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1
 
 
 
-def train(train_all_dataset, dataset_loader):
+def train(train_all_dataset, dataset_loader, teacher_force_ratio):
     seq2seq.train()
     loss_mean = 0.0
-    teacher_force_ratio = config_seq2seq.teacher_force_rate
     with tqdm(total=len(dataset_loader), desc='train') as pbar:
         for topic, topic_len, mems, essay_input, essay_target, _ in dataset_loader:
             topic, topic_len, mems, essay_input, essay_target = \
@@ -168,13 +166,15 @@ if __name__ == '__main__':
     writer, log_dir = tools_get_tensorboard_writer()
     best_save_loss = 1e9
     # test_loss = validation(train_all_dataset, test_all_dataloader)
+    begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     for ep in range(config_train.epoch):
         kfolds = k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
         train_loss = 0.0
         valid_loss = 0.0
         valid_loss_t = 0.0
+        if ep >= 9: begin_teacher_force_ratio *= 0.95
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):
-            train_loss_t = train(train_all_dataset, train_dataloader)
+            train_loss_t = train(train_all_dataset, train_dataloader, begin_teacher_force_ratio)
             if valid_dataloader:
                 valid_loss_t = validation(train_all_dataset, valid_dataloader)
                 valid_loss += valid_loss_t

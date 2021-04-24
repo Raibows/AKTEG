@@ -2,8 +2,10 @@ import copy
 import torch
 from torch.utils.data import Dataset
 from config import config_zhihu_dataset, config_concepnet
-from tools import tools_get_logger
-from tools import tools_load_pickle_obj
+from tools import tools_get_logger, tools_load_pickle_obj
+
+
+import random
 
 
 class ZHIHU_dataset(Dataset):
@@ -34,19 +36,18 @@ class ZHIHU_dataset(Dataset):
         temp_topic2idx, temp_essay2idx, self.data_topics, self.data_essays = \
             self.__read_datas(essay_special_tokens, topic_special_tokens)
 
-        self.topic_num_limit = min(self.topic_num_limit, len(temp_topic2idx))
-        self.essay_vocab_size = min(self.essay_vocab_size, len(temp_essay2idx))
-
         if not prior:
             self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
                                                                             self.topic_num_limit, self.data_topics,
                                                                             remove_high_top=0)
-            self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
-                                                                            self.essay_vocab_size, self.data_essays,
-                                                                            remove_high_top=30)
             if load_mems:
                 self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
                 self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)
+
+            reserved_essay2idx = self.merge_temp2idx_to_reserved(essay_special_tokens)
+            self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(reserved_essay2idx, temp_essay2idx,
+                                                                            self.essay_vocab_size, self.data_essays,
+                                                                            remove_high_top=30)
         else:
             self.topic2idx, self.idx2topic = prior['topic2idx'], prior['idx2topic']
             self.essay2idx, self.idx2essay = prior['essay2idx'], prior['idx2essay']
@@ -54,8 +55,11 @@ class ZHIHU_dataset(Dataset):
                 self.mem2idx, self.idx2mem = prior['mem2idx'], prior['idx2mem']
                 self.memory_corpus = prior['memory_corpus']
 
+        self.essay_vocab_size = min(len(self.essay2idx), self.essay_vocab_size)
+        self.topic_num_limit = min(len(self.topic2idx), self.topic_num_limit)
         self.mem_vocab_size = len(self.mem2idx) if self.load_mems else 0
-        if encode_to_tensor: self.__encode_datas()
+        if encode_to_tensor:
+            self.__encode_datas()
         self.print_info()
 
 
@@ -79,6 +83,10 @@ class ZHIHU_dataset(Dataset):
 
     def __limit_dict_by_frequency(self, reserved, temp2idx, size, datas, remove_high_top=100):
         assert datas and size >= len(reserved)
+        # update reserved
+        for k in reserved.keys():
+            if k not in temp2idx:
+                temp2idx[k] = len(temp2idx)
         idx2temp = [None for _ in temp2idx]
         for k, v in temp2idx.items(): idx2temp[v] = k
         cnts = [[i, 0] for i in idx2temp]
@@ -115,6 +123,19 @@ class ZHIHU_dataset(Dataset):
         tools_get_logger('data').info(f'delete {len(delete_indexs)}')
         self.delete_indexs = delete_indexs
         return delete_indexs
+
+    def merge_temp2idx_to_reserved(self, reserved:dict):
+        # merge topic2idx and mem2idx(optional) to exists essay2idx to expand the dict
+        # the expand dict will in reserved could keep reserved in follow limit_dict operation
+        assert len(self.topic2idx) > 0
+        for k, v in self.topic2idx.items():
+            if k not in reserved: reserved[k] = len(reserved)
+
+        if self.mem2idx:
+            for k, v in self.mem2idx.items():
+                if k not in reserved: reserved[k] = len(reserved)
+
+        return reserved
 
     def __preprocess(self, sent):
         temp = []
@@ -175,7 +196,8 @@ class ZHIHU_dataset(Dataset):
             if self.topic_mem_max_num % len(has_set) != 0:
                 nums[0] = self.topic_mem_max_num - sum(nums[1:])
             for t, n in zip(has_set, nums):
-                mems.extend(self.memory_corpus[t][:n])
+                temp = random.sample(self.memory_corpus[t], k=n)
+                mems.extend(temp)
 
         mems = self.convert_mem2idx(mems)
 
@@ -223,6 +245,8 @@ class ZHIHU_dataset(Dataset):
         return temp, real_num
 
     def print_info(self):
+        assert len(self.essay2idx) == self.essay_vocab_size
+        assert len(self.topic2idx) == self.topic_num_limit
         tools_get_logger('data').info(
             f"data_num {len(self)} topic_num/topic_num_limit {len(self.topic2idx)}/{self.topic_num_limit} \n"
             f"essay_vocab/essay_vocab_limit {len(self.essay2idx)}/{self.essay_vocab_size} \n"
