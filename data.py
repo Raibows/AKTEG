@@ -39,9 +39,11 @@ class ZHIHU_dataset(Dataset):
 
         if not prior:
             self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
-                                                                            self.topic_num_limit, self.data_topics)
+                                                                            self.topic_num_limit, self.data_topics,
+                                                                            remove_high_top=0)
             self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
-                                                                            self.essay_vocab_size, self.data_essays)
+                                                                            self.essay_vocab_size, self.data_essays,
+                                                                            remove_high_top=30)
             if load_mems:
                 self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
                 self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)
@@ -75,7 +77,7 @@ class ZHIHU_dataset(Dataset):
             essays['target'].append(et)
         self.data_essays = essays
 
-    def __limit_dict_by_frequency(self, reserved, temp2idx, size, datas):
+    def __limit_dict_by_frequency(self, reserved, temp2idx, size, datas, remove_high_top=100):
         assert datas and size >= len(reserved)
         idx2temp = [None for _ in temp2idx]
         for k, v in temp2idx.items(): idx2temp[v] = k
@@ -85,7 +87,10 @@ class ZHIHU_dataset(Dataset):
             for word in one: cnts[temp2idx[word]][1] += 1
         cnts = sorted(cnts, reverse=True, key=lambda t: t[1])
         reserved.clear()
-        for i in range(size): reserved[cnts[i][0]] = len(reserved)
+        for i in range(size+remove_high_top):
+            if cnts[i][1] == int(1e9) or i >= remove_high_top:
+                reserved[cnts[i][0]] = len(reserved)
+            if len(reserved) == size: break
         idx2temp = [None for _ in reserved]
         for k, v in reserved.items(): idx2temp[v] = k
 
@@ -199,15 +204,18 @@ class ZHIHU_dataset(Dataset):
         return essay_input, essay_target, real_len
 
     def convert_topic2idx(self, topic, padding_num=None, ret_tensor=False):
+        # returned real_num not containing the <eos_topic>
+        # so you may need to +1 manually
         if padding_num == None:
             padding_num = self.topic_padding_num
         temp = [self.topic2idx['<pad_topic>'] for _ in range(padding_num)]
-        real_num = min(len(topic), padding_num)
+        real_num = min(len(topic), padding_num - 1)
         for i, one in enumerate(topic[:padding_num]):
             if one not in self.topic2idx:
                 temp[i] = self.topic2idx['<unk_topic>']
             else:
                 temp[i] = self.topic2idx[one]
+        temp[real_num] = self.topic2idx['<eos_topic>']
         if ret_tensor:
             return torch.tensor(temp, dtype=torch.int64), torch.tensor(real_num, dtype=torch.int64)
         return temp, real_num
