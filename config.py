@@ -29,6 +29,7 @@ class config_zhihu_dataset:
     topic_num_limit = 100
     essay_vocab_size = 40000
     topic_threshold = 3
+    remove_high_freq_top = 30
     topic_padding_num = 6 # 5 to 6 is for eos
     essay_padding_len = 80
     topic_special_tokens = {'<pad_topic>': 0, '<eos_topic>': 1, '<unk_topic>': 2, '<fake_topic>': 3}
@@ -54,3 +55,4 @@ class config_seq2seq:
 
     embedding_size = 300
     pretrained_wv_path = './zhihu_dataset/seq2seq.wv'
+

@@ -43,12 +43,14 @@ class ZHIHU_dataset(Dataset):
 
 
         if not prior:
-            self.topic2idx, self.idx2topic = self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
-                                                                            self.topic_num_limit, self.data_topics,
-                                                                            remove_high_top=0)
-            self.essay2idx, self.idx2essay = self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
-                                                                            self.essay_vocab_size, self.data_essays,
-                                                                            remove_high_top=30)
+            self.topic2idx, self.idx2topic = \
+                self.__limit_dict_by_frequency(topic_special_tokens, temp_topic2idx,
+                                               self.topic_num_limit, self.data_topics,
+                                               remove_high_top=0)
+            self.essay2idx, self.idx2essay = \
+                self.__limit_dict_by_frequency(essay_special_tokens, temp_essay2idx,
+                                               self.essay_vocab_size, self.data_essays,
+                                               remove_high_top=config_zhihu_dataset.remove_high_freq_top)
             if load_mems:
                 self.mem2idx, self.idx2mem = tools_load_pickle_obj(config_concepnet.mem2idx_and_idx2mem_path)
                 self.memory_corpus = tools_load_pickle_obj(config_concepnet.topic_2_mems_corpus_path)

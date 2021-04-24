@@ -23,9 +23,11 @@ class Encoder(nn.Module):
         sent = inputs[0].index_select(1, idx_sort)
 
         sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len_sort.cpu())
-        outs, (h, c) = self.lstm(sent_packed)
-        outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=-1e9)
+        # outs, (h, c) = self.lstm(inputs[0])
+        outs, (h, c) = self.lstm.forward(sent_packed)
 
+        outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=1e-9)
+        #
         outs = outs.index_select(1, idx_reverse)
         h = h.index_select(1, idx_reverse)
         h = h.reshape(self.layer_num, h.size(1), -1)
@@ -125,7 +127,7 @@ class Seq2Seq(nn.Module):
         self.dropout = nn.Dropout(0.5)
         self.W_1 = nn.Linear(encoder.output_size, attention_size, bias=False)
         self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
-        self.W_3 = nn.Linear(topic_padding_num, topic_padding_num, bias=False)
+        self.W_3 = nn.Linear(attention_size, 1, bias=False)
 
     def forward_only_embedding_layer(self, token):
         """
@@ -148,9 +150,9 @@ class Seq2Seq(nn.Module):
         topic_num = topics_representations.shape[0]
         pre_t_matrix = self.dropout(self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1)))
         pre_t_matrix = pre_t_matrix.reshape(batch_size, topic_num, -1)
-        query_t = self.dropout(self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2))
-        # query_t [batch, t, 1] for using torch.batch_multiplication
-        e_t_i = self.dropout(self.W_3.forward(torch.tanh(pre_t_matrix @ query_t).squeeze(2)))
+        query_t = self.dropout(self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(1))
+        # query_t [batch, 1, temp] for using add broadcast
+        e_t_i = self.dropout(self.W_3.forward(torch.tanh(pre_t_matrix + query_t).reshape(batch_size * topic_num, -1))).reshape(batch_size, topic_num)
         alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num]
         c_t = topics_representations.reshape(batch_size, -1, topic_num) @ alpha_t_i.unsqueeze(2)
 
