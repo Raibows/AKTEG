@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from tools import tools_load_pickle_obj
+from tools import tools_load_pickle_obj, tools_get_logger
 
 class Encoder(nn.Module):
     def __init__(self, vocab_size, embed_size, layer_num, hidden_size, is_bid, pretrained_path):
@@ -12,7 +12,9 @@ class Encoder(nn.Module):
             self.embedding_layer.from_pretrained(
                 torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float)
             )
-        self.embedding_layer.weight.requires_grad = True
+            self.embedding_layer.weight.requires_grad = False
+        else:
+            self.embedding_layer.weight.requires_grad = True
         self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid,
                             dropout=0.5 if layer_num > 1 else 0.0)
         self.direction = 2 if is_bid else 1
@@ -54,7 +56,9 @@ class Decoder(nn.Module):
             self.embedding_layer.from_pretrained(
                 torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float)
             )
-        self.embedding_layer.weight.requires_grad = True
+            self.embedding_layer.weight.requires_grad = True
+        else:
+            self.embedding_layer.weight.requires_grad = False
         self.layer_num = layer_num
         self.embed_size = embed_size
         self.hidden_size = encoder_output_size
@@ -88,10 +92,10 @@ class Memory_neural(nn.Module):
         # still needs grad descent
         self.embedding_layer.weight.requires_grad = embedding_grad
         self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
-        self.U1 = nn.Linear(embed_size, embed_size)
-        self.V1 = nn.Linear(decoder_embed_size, embed_size)
-        self.U2 = nn.Linear(embed_size, embed_size)
-        self.V2 = nn.Linear(decoder_embed_size, embed_size)
+        self.U1 = nn.Linear(embed_size, embed_size, bias=False)
+        self.V1 = nn.Linear(decoder_embed_size, embed_size, bias=False)
+        self.U2 = nn.Linear(embed_size, embed_size, bias=False)
+        self.V2 = nn.Linear(decoder_embed_size, embed_size, bias=False)
         self.step_mem_embeddings = None
         self.dropout = nn.Dropout(0.5)
 
@@ -142,9 +146,9 @@ class Seq2Seq(nn.Module):
         self.essay_vocab_size = essay_vocab_size
         self.device = device
         self.dropout = nn.Dropout(0.5)
-        self.W_1 = nn.Linear(encoder.output_size, attention_size)
-        self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size)
-        self.W_3 = nn.Linear(topic_padding_num, topic_padding_num)
+        self.W_1 = nn.Linear(encoder.output_size, attention_size, bias=False)
+        self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
+        self.W_3 = nn.Linear(topic_padding_num, topic_padding_num, bias=False)
 
     def forward_only_decoder_embedding_layer(self, token):
         """
@@ -207,8 +211,8 @@ class Seq2Seq(nn.Module):
             if teacher_mode_chocie[now_step] < teacher_force_ratio:
                 now_input = essay_input[:, now_step]
             else:
-                now_input = torch.multinomial(torch.softmax(logits, dim=1), num_samples=1)
-                # now_input = logits.argmax(1)
+                # now_input = torch.multinomial(torch.softmax(logits, dim=1), num_samples=1)
+                now_input = logits.argmax(1)
             now_input_embeddings = self.forward_only_decoder_embedding_layer(now_input)
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1], topics_representations, mems)
@@ -220,8 +224,10 @@ class Seq2Seq(nn.Module):
         return decoder_outputs
 
 def uniform_init_weights(m):
+    s, e = -0.08, 0.08
     for name, param in m.named_parameters():
-        nn.init.uniform_(param.data, -0.08, 0.08)
+        nn.init.uniform_(param.data, s, e)
+
 
 if __name__ == '__main__':
 

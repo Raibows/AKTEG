@@ -3,7 +3,7 @@ from tqdm import tqdm
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from data import ZHIHU_dataset
-from neural import Encoder, Decoder, Seq2Seq, Memory_neural
+from neural import Encoder, Decoder, Seq2Seq, Memory_neural, uniform_init_weights
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
@@ -70,13 +70,14 @@ seq2seq = Seq2Seq(encoder=encoder,
                   essay_vocab_size=train_all_dataset.essay_vocab_size,
                   attention_size=config_seq2seq.attention_size,
                   device=device)
+seq2seq.apply(uniform_init_weights)
 if config_train.is_load_model:
     seq2seq.load_state_dict(torch.load(config_seq2seq.model_load_path, map_location=device))
 seq2seq.to(device)
 seq2seq.eval()
 
-optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate, weight_decay=0.5)
-criterion = nn.CrossEntropyLoss(ignore_index=train_all_dataset.essay2idx['<pad>']).to(device)
+optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate, weight_decay=0.3)
+criterion = nn.CrossEntropyLoss(reduction='mean').to(device)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.9, patience=3, min_lr=6e-6)
 warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 3 else 1)
 
@@ -92,7 +93,7 @@ def train(train_all_dataset, dataset_loader):
             topic, topic_len, mems, essay_input, essay_target = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
-            logits = seq2seq.forward((topic, topic_len), essay_input, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward((topic, topic_len+1), essay_input, mems, teacher_force_ratio=teacher_force_ratio)
             logits = logits.permute(1, 0, 2) # [batch, essay_max_len, essay_vocab_size]
 
             essay_target = essay_target.view(-1)
@@ -126,7 +127,7 @@ def validation(train_all_dataset, dataset_loader, prediction_path=None):
             topic, topic_len, mems, essay_input, essay_target = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
-            logits = seq2seq.forward((topic, topic_len), essay_input, mems=mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward((topic, topic_len+1), essay_input, mems=mems, teacher_force_ratio=teacher_force_ratio)
             logits = logits.permute(1, 0, 2) # [batch, essay_max_len, essay_vocab_size]
             if prediction_path:
                 predicts = logits.argmax(dim=2)
