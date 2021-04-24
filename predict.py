@@ -35,7 +35,6 @@ def prediction(seq2seq, train_all_dataset, dataset_loader, device, res_path=conf
 
             pbar.update(1)
 
-    res_path = f'{res_path}.predictions.load_model_{config_train.is_load_model}'
     tools_make_dir(res_path)
     with open(res_path, 'w', encoding='utf-8') as file:
         for t, o, p in zip(topics_set, original_essays_set, predicts_set):
@@ -55,7 +54,8 @@ def prediction(seq2seq, train_all_dataset, dataset_loader, device, res_path=conf
 if __name__ == '__main__':
     tools_setup_seed(667)
 
-    device = torch.device(config_train.device_name)
+    device = torch.device('cuda:3')
+    tools_get_logger('predict').info('using cuda : 3')
 
     train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                       topic_num_limit=config_zhihu_dataset.topic_num_limit,

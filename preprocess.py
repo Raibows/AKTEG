@@ -63,7 +63,7 @@ def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_
     import random
     tools_setup_seed(667)
     if unk_val == 'gaussian':
-        wv = [[random.normalvariate(0, 0.3) for _ in range(wv_dim)] for _ in range(wv_dim)]
+        wv = [[random.normalvariate(0, 0.3) for _ in range(wv_dim)] for i in word_dict]
     else:
         wv = [[unk_val for _ in range(wv_dim)] for i in word_dict]
     unk_num = 0
@@ -88,7 +88,7 @@ def preprocess_topic_and_essay_dict_pretrained_wv():
     from config import config_zhihu_dataset as c
     from tools import tools_save_pickle_obj
     train_all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                      c.topic_padding_num, c.essay_padding_len)
+                                      c.topic_padding_num, c.essay_padding_len, load_mems=False, to_tensor=False)
     pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path)
 
     wv_topic = process_word_dict_and_pretrained_wv(train_all_dataset.topic2idx, pretrained_wv, c.pretrained_wv_dim)
@@ -202,8 +202,8 @@ def preprocess_concepnet():
 
 
 if __name__ == '__main__':
-    split_train_test_set()
+    # split_train_test_set()
     # preprocess_topic_and_essay_dict_pretrained_wv()
     # preprocess_concepnet()
-    # build_commonsense_memory()
+    build_commonsense_memory()
     pass

@@ -13,7 +13,8 @@ class Encoder(nn.Module):
                 torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float)
             )
         self.embedding_layer.weight.requires_grad = True
-        self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid, dropout=0.5)
+        self.lstm = nn.LSTM(embed_size, hidden_size, layer_num, bidirectional=is_bid,
+                            dropout=0.5 if layer_num > 1 else 0.0)
         self.direction = 2 if is_bid else 1
         self.output_size = self.direction * self.hidden_size
         self.dropout = nn.Dropout(0.5)
@@ -57,7 +58,8 @@ class Decoder(nn.Module):
         self.layer_num = layer_num
         self.embed_size = embed_size
         self.hidden_size = encoder_output_size
-        self.lstm = nn.LSTM(self.input_size, encoder_output_size, layer_num, bidirectional=False, dropout=0.5)
+        self.lstm = nn.LSTM(self.input_size, encoder_output_size, layer_num,
+                            bidirectional=False, dropout=0.5 if layer_num > 1 else 0.0)
         self.fc = nn.Linear(encoder_output_size, vocab_size)
         self.dropout = nn.Dropout(0.5)
 
@@ -72,7 +74,7 @@ class Decoder(nn.Module):
         return logits, (h, c)
 
 class Memory_neural(nn.Module):
-    def __init__(self, vocab_size, embed_size, decoder_hidden_size, decoder_embed_size, pretrained_path):
+    def __init__(self, vocab_size, embed_size, decoder_hidden_size, decoder_embed_size, pretrained_path, embedding_grad):
         super(Memory_neural, self).__init__()
         self.embed_size = embed_size
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
@@ -84,7 +86,7 @@ class Memory_neural(nn.Module):
         )
         # using gate mechanism is for step-by-step update
         # still needs grad descent
-        self.embedding_layer.weight.requires_grad = True
+        self.embedding_layer.weight.requires_grad = embedding_grad
         self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
         self.U1 = nn.Linear(embed_size, embed_size)
         self.V1 = nn.Linear(decoder_embed_size, embed_size)
@@ -130,7 +132,6 @@ class Memory_neural(nn.Module):
         m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings
 
         return m_t
-
 
 class Seq2Seq(nn.Module):
     def __init__(self, encoder:Encoder, decoder:Decoder, memory_neural:Memory_neural, topic_padding_num, essay_vocab_size, attention_size, device):
@@ -206,7 +207,8 @@ class Seq2Seq(nn.Module):
             if teacher_mode_chocie[now_step] < teacher_force_ratio:
                 now_input = essay_input[:, now_step]
             else:
-                now_input = logits.argmax(1)
+                now_input = torch.multinomial(torch.softmax(logits, dim=1), num_samples=1)
+                # now_input = logits.argmax(1)
             now_input_embeddings = self.forward_only_decoder_embedding_layer(now_input)
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1], topics_representations, mems)
@@ -216,6 +218,10 @@ class Seq2Seq(nn.Module):
         self.clear_memory_neural_step_state()
         # [essay_len, batch, essay_vocab_size]
         return decoder_outputs
+
+def uniform_init_weights(m):
+    for name, param in m.named_parameters():
+        nn.init.uniform_(param.data, -0.08, 0.08)
 
 if __name__ == '__main__':
 

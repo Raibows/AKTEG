@@ -14,6 +14,7 @@ from predict import prediction
 tools_setup_seed(667)
 
 device = torch.device(config_train.device_name)
+tools_get_logger('train').info(f"using device {config_train.device_name}")
 
 train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                   topic_num_limit=config_zhihu_dataset.topic_num_limit,
@@ -59,7 +60,8 @@ memory_neural = Memory_neural(vocab_size=train_all_dataset.mem_vocab_size,
                               embed_size=config_seq2seq.memory_embed_size,
                               decoder_hidden_size=decoder.hidden_size,
                               decoder_embed_size=decoder.embed_size,
-                              pretrained_path=config_concepnet.memory_pretrained_wv_path)
+                              pretrained_path=config_concepnet.memory_pretrained_wv_path,
+                              embedding_grad=config_seq2seq.memory_embedding_grad)
 
 seq2seq = Seq2Seq(encoder=encoder,
                   decoder=decoder,
@@ -91,13 +93,17 @@ def train(train_all_dataset, dataset_loader):
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
             logits = seq2seq.forward((topic, topic_len), essay_input, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = logits.permute(1, 0, 2) # [batch, essay_max_len, essay_vocab_size]
 
             essay_target = essay_target.view(-1)
-            logits = logits.view(-1, train_all_dataset.essay_vocab_size)
+            logits = logits.reshape(-1, train_all_dataset.essay_vocab_size)
             optimizer.zero_grad()
             loss = criterion(logits, essay_target)
             loss.backward()
-            nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=1.0, norm_type=2.0)
+            idx = logits[:10].argmax(dim=1).tolist()
+            tools_get_logger('example').info(f"{train_all_dataset.convert_idx2essay(idx)}")
+            nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=config_train.grad_clip_max_norm,
+                                     norm_type=config_train.grad_clip_norm_type)
             optimizer.step()
 
             pbar.set_postfix_str(f"loss: {loss.item():.4f}")
@@ -106,11 +112,14 @@ def train(train_all_dataset, dataset_loader):
     return loss_mean / len(dataset_loader)
 
 @torch.no_grad()
-def validation(train_all_dataset, dataset_loader):
+def validation(train_all_dataset, dataset_loader, prediction_path=None):
     seq2seq.eval()
     loss_mean = 0.0
     teacher_force_ratio = 0.0
     optimizer.zero_grad()
+    predicts_set = []
+    topics_set = []
+    original_essays_set = []
     with tqdm(total=len(dataset_loader), desc='validation') as pbar:
         for topic, topic_len, mems, essay_input, essay_target, _ in dataset_loader:
 
@@ -118,14 +127,37 @@ def validation(train_all_dataset, dataset_loader):
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
 
             logits = seq2seq.forward((topic, topic_len), essay_input, mems=mems, teacher_force_ratio=teacher_force_ratio)
+            logits = logits.permute(1, 0, 2) # [batch, essay_max_len, essay_vocab_size]
+            if prediction_path:
+                predicts = logits.argmax(dim=2)
+                predicts_set.extend(predicts.tolist())
+                topics_set.extend(topic.tolist())
+                original_essays_set.extend(essay_target.tolist())
+
 
             essay_target = essay_target.view(-1)
-            logits = logits.view(-1, train_all_dataset.essay_vocab_size)
+            logits = logits.reshape(-1, train_all_dataset.essay_vocab_size)
             loss = criterion(logits, essay_target)
 
             pbar.set_postfix_str(f"loss: {loss.item():.4f}")
             loss_mean += loss.item()
             pbar.update(1)
+
+    if prediction_path:
+        tools_make_dir(prediction_path)
+        with open(prediction_path, 'w', encoding='utf-8') as file:
+            for t, o, p in zip(topics_set, original_essays_set, predicts_set):
+                t, o, p = train_all_dataset.convert_idx2topic(t), train_all_dataset.convert_idx2essay(o), \
+                          train_all_dataset.convert_idx2essay(p)
+                file.write(' '.join(t))
+                file.write('\n')
+                file.write(' '.join(o))
+                file.write('\n')
+                file.write(' '.join(p))
+                file.write('\n')
+
+        tools_get_logger('validation').info(f"predictions done! the res is in {prediction_path}")
+
     return loss_mean / len(dataset_loader)
 
 
@@ -149,9 +181,8 @@ if __name__ == '__main__':
             tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
-        test_loss = validation(train_all_dataset, test_all_dataloader)
-        prediction(seq2seq, train_all_dataset, test_all_dataloader, device=device,
-                   res_path=f'{log_dir}/epoch_{ep}.test_loss{test_loss}.predictions')
+        test_loss = validation(train_all_dataset, test_all_dataloader,
+                               prediction_path=f'{log_dir}/epoch_{ep}.predictions')
         scheduler.step(test_loss)
         warmup_scheduler.step()
 
@@ -165,7 +196,7 @@ if __name__ == '__main__':
         tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f} '
                                        f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}')
 
-        if test_loss < best_save_loss:
+        if config_train.is_save_model and test_loss < best_save_loss:
             save_path = config_seq2seq.model_save_fmt.format(tools_get_time(), test_loss)
             tools_make_dir(save_path)
             tools_copy_file('./config.py', save_path+'.config.py')
