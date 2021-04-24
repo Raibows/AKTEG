@@ -52,7 +52,8 @@ def k_fold_split(all_dataset, batch_size, k=5):
         test = torch.utils.data.dataset.Subset(all_dataset, list(fs))
         train = torch.utils.data.dataset.Subset(all_dataset, list(all_set-fs))
         kfolds.append((
-            DataLoader(train, batch_size=batch_size, num_workers=config_train.dataloader_num_workers, pin_memory=True),
+            DataLoader(train, batch_size=batch_size, num_workers=config_train.dataloader_num_workers,
+                       shuffle=True, pin_memory=True),
             DataLoader(test, batch_size=batch_size, num_workers=config_train.dataloader_num_workers, pin_memory=True)
         ))
     return kfolds
@@ -88,7 +89,7 @@ def preprocess_topic_and_essay_dict_pretrained_wv():
     from config import config_zhihu_dataset as c
     from tools import tools_save_pickle_obj
     train_all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                      c.topic_padding_num, c.essay_padding_len, load_mems=False, to_tensor=False)
+                                      c.topic_padding_num, c.essay_padding_len, load_mems=False, encode_to_tensor=False)
     pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path)
 
     wv_topic = process_word_dict_and_pretrained_wv(train_all_dataset.topic2idx, pretrained_wv, c.pretrained_wv_dim)
@@ -107,7 +108,7 @@ def build_commonsense_memory():
 
     tools_setup_seed(667)
     train_all_dataset = ZHIHU_dataset(cz.train_data_path, cz.topic_num_limit, cz.essay_vocab_size, cz.topic_threshold,
-                                      cz.topic_padding_num, cz.essay_padding_len, prior=None, load_mems=False, to_tensor=False)
+                                      cz.topic_padding_num, cz.essay_padding_len, prior=None, load_mems=False, encode_to_tensor=False)
     pretrained_wv = read_pretrained_word_vectors(cz.pretrained_wv_path)
     concepnet_dict = tools_load_pickle_obj(cc.reserved_data_path)
     # topic_memory_corpus = [['<oov>' for i in range(cz.topic_mem_max_num)] for j in range(train_all_dataset.topic_num_limit)]
@@ -156,7 +157,10 @@ def split_train_test_set():
     from config import config_zhihu_dataset as c
     from tools import tools_get_logger
     all_dataset = ZHIHU_dataset(c.raw_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                c.topic_padding_num, c.essay_padding_len, load_mems=False, to_tensor=False)
+                                c.topic_padding_num, c.essay_padding_len, load_mems=False, encode_to_tensor=False)
+    # xx = sum(all_dataset.len_essays) / len(all_dataset)
+    # print('average len is ', xx)
+
     delete_indexs = all_dataset.limit_datas()
     datas = read_line_like_file(c.raw_data_path)
     all = set([i for i in range(len(datas))]) - set(delete_indexs)
@@ -203,7 +207,7 @@ def preprocess_concepnet():
 
 if __name__ == '__main__':
     # split_train_test_set()
-    # preprocess_topic_and_essay_dict_pretrained_wv()
+    preprocess_topic_and_essay_dict_pretrained_wv()
     # preprocess_concepnet()
     build_commonsense_memory()
     pass

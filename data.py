@@ -10,7 +10,7 @@ class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, essay_vocab_size, topic_threshold, topic_padding_num, essay_padding_len,
                  topic_special_tokens=config_zhihu_dataset.topic_special_tokens,
                  essay_special_tokens=config_zhihu_dataset.essay_special_tokens,
-                 prior=None, load_mems=True, to_tensor=True):
+                 prior=None, load_mems=True, encode_to_tensor=True):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -55,7 +55,7 @@ class ZHIHU_dataset(Dataset):
                 self.memory_corpus = prior['memory_corpus']
 
         self.mem_vocab_size = len(self.mem2idx) if self.load_mems else 0
-        if to_tensor: self.__encode_datas()
+        if encode_to_tensor: self.__encode_datas()
         self.print_info()
 
 
@@ -87,7 +87,7 @@ class ZHIHU_dataset(Dataset):
             for word in one: cnts[temp2idx[word]][1] += 1
         cnts = sorted(cnts, reverse=True, key=lambda t: t[1])
         reserved.clear()
-        for i in range(size+remove_high_top):
+        for i in range(len(cnts)):
             if cnts[i][1] == int(1e9) or i >= remove_high_top:
                 reserved[cnts[i][0]] = len(reserved)
             if len(reserved) == size: break
@@ -98,12 +98,14 @@ class ZHIHU_dataset(Dataset):
 
     def limit_datas(self):
         # delete the data whose the number of in dict topics below the threshold
+        # using before encode_datas
+        assert self.len_essays == None
         delete_indexs = []
-        for i, one in enumerate(self.data_topics):
+        for i, (dt, de) in enumerate(zip(self.data_topics, self.data_essays)):
             cnt = 0
-            for t in one:
+            for t in dt:
                 cnt += (t in self.topic2idx)
-            if cnt < self.topic_threshold:
+            if cnt < self.topic_threshold or len(de) < self.essay_padding_len // 2:
                 delete_indexs.append(i)
 
         for d in sorted(delete_indexs, reverse=True):
