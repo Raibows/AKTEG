@@ -28,45 +28,33 @@ test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
                                  topic_threshold=config_zhihu_dataset.topic_threshold,
                                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
                                  essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                 prior={'topic2idx': train_all_dataset.topic2idx,
-                                        'idx2topic': train_all_dataset.idx2topic,
-                                        'essay2idx': train_all_dataset.essay2idx,
-                                        'idx2essay': train_all_dataset.idx2essay,
-                                        'mem2idx': train_all_dataset.mem2idx,
-                                        'idx2mem': train_all_dataset.idx2mem,
-                                        'memory_corpus': train_all_dataset.memory_corpus})
+                                 prior=train_all_dataset.get_prior())
 
 test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size,
                                  num_workers=config_train.dataloader_num_workers, pin_memory=True)
 
 tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)}")
 
-encoder = Encoder(vocab_size=train_all_dataset.topic_num_limit,
-                  embed_size=config_seq2seq.encoder_embed_size,
+encoder = Encoder(embed_size=config_seq2seq.embedding_size,
                   layer_num=config_seq2seq.encoder_lstm_layer_num,
                   hidden_size=config_seq2seq.encoder_lstm_hidden_size,
-                  is_bid=config_seq2seq.encoder_lstm_is_bid,
-                  pretrained_path=config_zhihu_dataset.topic_preprocess_wv_path)
+                  is_bid=config_seq2seq.encoder_lstm_is_bid)
 
-decoder = Decoder(vocab_size=train_all_dataset.essay_vocab_size,
-                  embed_size=config_seq2seq.decoder_embed_size,
+decoder = Decoder(vocab_size=train_all_dataset.word_vocab_size,
+                  embed_size=config_seq2seq.embedding_size,
                   layer_num=config_seq2seq.decoder_lstm_layer_num,
-                  encoder_output_size=encoder.output_size,
-                  memory_neural_embed_size=config_seq2seq.memory_embed_size,
-                  pretrained_path=config_zhihu_dataset.essay_preprocess_wv_path)
+                  encoder_output_size=encoder.output_size,)
 
-memory_neural = Memory_neural(vocab_size=train_all_dataset.mem_vocab_size,
-                              embed_size=config_seq2seq.memory_embed_size,
-                              decoder_hidden_size=decoder.hidden_size,
-                              decoder_embed_size=decoder.embed_size,
-                              pretrained_path=config_concepnet.memory_pretrained_wv_path,
-                              embedding_grad=config_seq2seq.memory_embedding_grad)
+memory_neural = Memory_neural(embed_size=config_seq2seq.embedding_size,
+                              decoder_hidden_size=decoder.hidden_size)
 
 seq2seq = Seq2Seq(encoder=encoder,
                   decoder=decoder,
                   memory_neural=memory_neural,
-                  topic_padding_num=train_all_dataset.topic_padding_num,
-                  essay_vocab_size=train_all_dataset.essay_vocab_size,
+                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                  total_vocab_size=train_all_dataset.word_vocab_size,
+                  embed_size=config_seq2seq.embedding_size,
+                  pretrained_path=config_seq2seq.pretrained_wv_path,
                   attention_size=config_seq2seq.attention_size,
                   device=device)
 seq2seq.apply(uniform_init_weights)
@@ -95,12 +83,12 @@ def train(train_all_dataset, dataset_loader, teacher_force_ratio):
             logits = logits.permute(1, 0, 2) # [batch, essay_max_len, essay_vocab_size]
 
             essay_target = essay_target.view(-1)
-            logits = logits.reshape(-1, train_all_dataset.essay_vocab_size)
+            logits = logits.reshape(-1, train_all_dataset.word_vocab_size)
             optimizer.zero_grad()
             loss = criterion(logits, essay_target)
             loss.backward()
             idx = logits[:10].argmax(dim=1).tolist()
-            tools_get_logger('example').info(f"{train_all_dataset.convert_idx2essay(idx)}")
+            tools_get_logger('example').info(f"{train_all_dataset.convert_idx2words(idx)}")
             nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=config_train.grad_clip_max_norm,
                                      norm_type=config_train.grad_clip_norm_type)
             optimizer.step()
@@ -135,7 +123,7 @@ def validation(train_all_dataset, dataset_loader, prediction_path=None):
 
 
             essay_target = essay_target.view(-1)
-            logits = logits.reshape(-1, train_all_dataset.essay_vocab_size)
+            logits = logits.reshape(-1, train_all_dataset.word_vocab_size)
             loss = criterion(logits, essay_target)
 
             pbar.set_postfix_str(f"loss: {loss.item():.4f}")
@@ -146,8 +134,8 @@ def validation(train_all_dataset, dataset_loader, prediction_path=None):
         tools_make_dir(prediction_path)
         with open(prediction_path, 'w', encoding='utf-8') as file:
             for t, o, p in zip(topics_set, original_essays_set, predicts_set):
-                t, o, p = train_all_dataset.convert_idx2topic(t), train_all_dataset.convert_idx2essay(o), \
-                          train_all_dataset.convert_idx2essay(p)
+                t, o, p = train_all_dataset.convert_idx2words(t), train_all_dataset.convert_idx2words(o), \
+                          train_all_dataset.convert_idx2words(p)
                 file.write(' '.join(t))
                 file.write('\n')
                 file.write(' '.join(o))
@@ -184,6 +172,8 @@ if __name__ == '__main__':
 
         test_loss = validation(train_all_dataset, test_all_dataloader,
                                prediction_path=f'{log_dir}/epoch_{ep}.predictions')
+        train_all_dataset.shuffle_memory()
+
         scheduler.step(test_loss)
         warmup_scheduler.step()
 

@@ -84,19 +84,17 @@ def read_pretrained_word_vectors(path):
     return pretrained_wv
 
 
-def preprocess_topic_and_essay_dict_pretrained_wv():
+def generate_pretrained_wv():
     from data import ZHIHU_dataset
     from config import config_zhihu_dataset as c
+    from config import config_seq2seq as s
     from tools import tools_save_pickle_obj
     train_all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                      c.topic_padding_num, c.essay_padding_len, load_mems=False, encode_to_tensor=False)
+                                      c.topic_padding_num, c.essay_padding_len, load_mems=True, encode_to_tensor=False)
     pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path)
 
-    wv_topic = process_word_dict_and_pretrained_wv(train_all_dataset.topic2idx, pretrained_wv, c.pretrained_wv_dim)
-    tools_save_pickle_obj(wv_topic, c.topic_preprocess_wv_path)
-
-    wv_essay = process_word_dict_and_pretrained_wv(train_all_dataset.essay2idx, pretrained_wv, c.pretrained_wv_dim)
-    tools_save_pickle_obj(wv_essay, c.essay_preprocess_wv_path)
+    wv = process_word_dict_and_pretrained_wv(train_all_dataset.word2idx, pretrained_wv, c.pretrained_wv_dim)
+    tools_save_pickle_obj(wv, s.pretrained_wv_path)
 
 def build_commonsense_memory():
     from data import ZHIHU_dataset
@@ -147,8 +145,6 @@ def build_commonsense_memory():
             if one not in mem2idx:
                 mem2idx[one] = len(mem2idx)
     idx2mem = {v:k for k, v in mem2idx.items()}
-    wv_mem = process_word_dict_and_pretrained_wv(mem2idx, pretrained_wv, cz.pretrained_wv_dim, unk_val=0.0)
-    tools_save_pickle_obj(wv_mem, cc.memory_pretrained_wv_path)
     tools_save_pickle_obj((mem2idx, idx2mem), cc.mem2idx_and_idx2mem_path)
     tools_save_pickle_obj(topic_memory_corpus, cc.topic_2_mems_corpus_path)
 
@@ -209,7 +205,7 @@ def preprocess_concepnet():
 
 if __name__ == '__main__':
     # split_train_test_set()
-    preprocess_topic_and_essay_dict_pretrained_wv()
+    # generate_pretrained_wv()
     # preprocess_concepnet()
     build_commonsense_memory()
     pass
