@@ -323,8 +323,16 @@ if __name__ == '__main__':
     pass
 
 
+    train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                  topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                  essay_vocab_size=config_zhihu_dataset.essay_vocab_size,
+                                  topic_threshold=config_zhihu_dataset.topic_threshold,
+                                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                  essay_padding_len=config_zhihu_dataset.essay_padding_len)
 
 
+
+    pass
 
 
 

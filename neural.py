@@ -100,7 +100,7 @@ class Memory_neural(nn.Module):
     def forward(self, begin_embeddings, decoder_hidden_s_t_1):
         if self.step_mem_embeddings == None:
             self.step_mem_embeddings = begin_embeddings.permute(1, 0, 2)
-            # embeddings [batch, len, embed_size]
+            # reshape embeddings to [batch, len, embed_size]
 
 
         v_t = torch.tanh(self.dropout(self.W(decoder_hidden_s_t_1)))
@@ -120,9 +120,6 @@ class Seq2Seq(nn.Module):
         self.memory_neural = memory_neural
         self.total_vocab_size = total_vocab_size
         self.embedding_layer = nn.Embedding(total_vocab_size, embed_size)
-        if pretrained_path:
-            self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float))
-        self.embedding_layer.weight.requires_grad = False
         self.device = device
         self.dropout = nn.Dropout(0.5)
         self.W_1 = nn.Linear(encoder.output_size, attention_size, bias=False)
@@ -212,6 +209,16 @@ def uniform_init_weights(m):
     s, e = -0.08, 0.08
     for name, param in m.named_parameters():
         nn.init.uniform_(param.data, s, e)
+
+def init_param(self):
+    for param in self.parameters():
+        if param.requires_grad and len(param.shape) > 0:
+            stddev = 1 / math.sqrt(param.shape[0])
+            self.truncated_normal_(param, std=stddev)
+    if hasattr(self, 'embedding_layer'):
+        if self.pretrained_path:
+            self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float))
+        self.embedding_layer.weight.requires_grad = True
 
 
 if __name__ == '__main__':

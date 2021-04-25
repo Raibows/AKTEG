@@ -75,16 +75,23 @@ def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_
     return wv
 
 def read_pretrained_word_vectors(path):
+    from tools import tools_get_logger
+    from tqdm import tqdm
+    tools_get_logger('preprocess').info(f"loading pretrained word vectors from {path}")
     pretrained_wv = {}
     with open(path, 'r', encoding='utf-8') as file:
-        for i, line in enumerate(file):
-            line = line.strip('\n\r').split(' ')
-            wv = list(map(lambda x: float(x), line[1:-1]))
-            pretrained_wv[line[0]] = wv
+        with tqdm(total=8824331, desc='tencent_wv') as pbar:
+            for i, line in enumerate(file):
+                pbar.update(1)
+                if i == 0: continue
+                line = line.strip('\n\r').split(' ')
+                wv = list(map(lambda x: float(x), line[1:-1]))
+                pretrained_wv[line[0]] = wv
     return pretrained_wv
 
 
 def generate_pretrained_wv():
+    # make sure you have build latest memory before
     from data import ZHIHU_dataset
     from config import config_zhihu_dataset as c
     from config import config_seq2seq as s
@@ -205,7 +212,7 @@ def preprocess_concepnet():
 
 if __name__ == '__main__':
     # split_train_test_set()
-    # generate_pretrained_wv()
+    generate_pretrained_wv()
     # preprocess_concepnet()
-    build_commonsense_memory()
+    # build_commonsense_memory()
     pass
