@@ -58,6 +58,29 @@ def k_fold_split(all_dataset, batch_size, k=5):
         ))
     return kfolds
 
+def read_pretrained_word_vectors(path, wv_dim):
+    from tools import tools_get_logger
+    from tqdm import tqdm
+    tools_get_logger('preprocess').info(f"loading pretrained word vectors from {path}")
+    pretrained_wv = {}
+    if 'tencent' in path.lower():
+        total = 8824331
+        desc = 'tencent_wv'
+        skip = 0
+    else:
+        total = 259922
+        desc = 'zhihu_wv'
+        skip = -10
+    with open(path, 'r', encoding='utf-8') as file:
+        with tqdm(total=total, desc=desc) as pbar:
+            for i, line in enumerate(file):
+                pbar.update(1)
+                if i == skip: continue
+                line = line.strip('\n\r').split(' ')
+                wv = list(map(lambda x: float(x), line[1:]))
+                assert len(wv) == wv_dim
+                pretrained_wv[line[0]] = wv
+    return pretrained_wv
 
 def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_dim: int, unk_val='gaussian'):
     from tools import tools_setup_seed
@@ -74,34 +97,26 @@ def process_word_dict_and_pretrained_wv(word_dict:dict, pretrained_wv: dict, wv_
     print(f'unk_num {unk_num} finding {len(word_dict)-unk_num} all {len(word_dict)}')
     return wv
 
-def read_pretrained_word_vectors(path):
-    from tools import tools_get_logger
-    from tqdm import tqdm
-    tools_get_logger('preprocess').info(f"loading pretrained word vectors from {path}")
-    pretrained_wv = {}
-    with open(path, 'r', encoding='utf-8') as file:
-        with tqdm(total=8824331, desc='tencent_wv') as pbar:
-            for i, line in enumerate(file):
-                pbar.update(1)
-                if i == 0: continue
-                line = line.strip('\n\r').split(' ')
-                wv = list(map(lambda x: float(x), line[1:-1]))
-                pretrained_wv[line[0]] = wv
-    return pretrained_wv
-
-
-def generate_pretrained_wv():
+def generate_pretrained_wv(pretrained_wv=None):
     # make sure you have build latest memory before
     from data import ZHIHU_dataset
     from config import config_zhihu_dataset as c
     from config import config_seq2seq as s
+    from config import config_concepnet
     from tools import tools_save_pickle_obj
-    train_all_dataset = ZHIHU_dataset(c.train_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                      c.topic_padding_num, c.essay_padding_len, load_mems=True, encode_to_tensor=False)
-    pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path)
 
-    wv = process_word_dict_and_pretrained_wv(train_all_dataset.word2idx, pretrained_wv, c.pretrained_wv_dim)
-    tools_save_pickle_obj(wv, s.pretrained_wv_path)
+    name = 'tencent'
+    assert config_concepnet.memory_corpus_path != None
+    train_all_dataset = ZHIHU_dataset(c.train_data_path, topic_num_limit=c.topic_num_limit,
+                                      topic_padding_num=c.topic_padding_num, vocab_size=c.vocab_size,
+                                      essay_padding_len=c.essay_padding_len, prior=None, encode_to_tensor=False,
+                                      mem_corpus_path=config_concepnet.memory_corpus_path)
+    if not pretrained_wv:
+        pretrained_wv = read_pretrained_word_vectors(c.pretrained_wv_path[name], c.pretrained_wv_dim[name])
+
+    wv = process_word_dict_and_pretrained_wv(train_all_dataset.word2idx, pretrained_wv, c.pretrained_wv_dim[name])
+
+    tools_save_pickle_obj(wv, s.pretrained_wv_path[name])
 
 def build_commonsense_memory():
     from data import ZHIHU_dataset
@@ -110,18 +125,21 @@ def build_commonsense_memory():
     import random
     import synonyms
     from tools import tools_save_pickle_obj, tools_load_pickle_obj, tools_setup_seed
+    import time
 
     tools_setup_seed(667)
-    train_all_dataset = ZHIHU_dataset(cz.train_data_path, cz.topic_num_limit, cz.essay_vocab_size, cz.topic_threshold,
-                                      cz.topic_padding_num, cz.essay_padding_len, prior=None, load_mems=False, encode_to_tensor=False)
-    pretrained_wv = read_pretrained_word_vectors(cz.pretrained_wv_path)
+    train_all_dataset = ZHIHU_dataset(path=cz.train_data_path, topic_num_limit=cz.topic_num_limit,
+                                      topic_padding_num=cz.topic_padding_num, vocab_size=cz.vocab_size,
+                                      essay_padding_len=cz.essay_padding_len, prior=None, mem_corpus_path=None)
+    wv_name = 'tencent'
+    pretrained_wv = read_pretrained_word_vectors(cz.pretrained_wv_path[wv_name], cz.pretrained_wv_dim[wv_name])
     concepnet_dict = tools_load_pickle_obj(cc.reserved_data_path)
     # topic_memory_corpus = [['<oov>' for i in range(cz.topic_mem_max_num)] for j in range(train_all_dataset.topic_num_limit)]
     topic_memory_corpus = {} # {topic_word : [list of synonyms...]}
 
     for k, v in train_all_dataset.topic2idx.items():
         synonym_add_num = cz.topic_mem_max_num
-        topic_memory_corpus[k] = ['<oov>' for _ in range(cz.topic_mem_max_num)]
+        topic_memory_corpus[k] = ['<unk>' for _ in range(cz.topic_mem_max_num)]
         if k in concepnet_dict:
             candidates = concepnet_dict[k]
             if len(candidates) > cz.topic_mem_max_num:
@@ -146,31 +164,30 @@ def build_commonsense_memory():
             topic_memory_corpus[k][i] = temp[flag]
             i += 1
             flag += 1
-    mem2idx = cc.memory_special_tokens
-    for k, syns in topic_memory_corpus.items():
-        for one in syns:
-            if one not in mem2idx:
-                mem2idx[one] = len(mem2idx)
-    idx2mem = {v:k for k, v in mem2idx.items()}
-    tools_save_pickle_obj((mem2idx, idx2mem), cc.mem2idx_and_idx2mem_path)
-    tools_save_pickle_obj(topic_memory_corpus, cc.topic_2_mems_corpus_path)
+
+    tools_save_pickle_obj(topic_memory_corpus, cc.memory_corpus_path)
+
 
 def split_train_test_set():
     from data import ZHIHU_dataset
-    from config import config_zhihu_dataset as c
+    from config import config_zhihu_dataset
     from tools import tools_get_logger
-    all_dataset = ZHIHU_dataset(c.raw_data_path, c.topic_num_limit, c.essay_vocab_size, c.topic_threshold,
-                                c.topic_padding_num, c.essay_padding_len, load_mems=False, encode_to_tensor=False)
-    # xx = sum(all_dataset.len_essays) / len(all_dataset)
-    # print('average len is ', xx)
+    raw_dataset = ZHIHU_dataset(path=config_zhihu_dataset.raw_data_path,
+                                topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                vocab_size=config_zhihu_dataset.vocab_size,
+                                essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                prior=None, encode_to_tensor=False)
 
-    delete_indexs = all_dataset.limit_datas()
-    datas = read_line_like_file(c.raw_data_path)
+    delete_indexs = raw_dataset.limit_datas(topic_threshold=config_zhihu_dataset.preprocess_topic_threshold,
+                                            essay_min_len=config_zhihu_dataset.preprocess_essay_min_len)
+
+    datas = read_line_like_file(config_zhihu_dataset.raw_data_path)
     all = set([i for i in range(len(datas))]) - set(delete_indexs)
     datas = [datas[i] for i in all]
-    train_datas, test_datas = split_line_like_datas(datas, c.test_data_split_ratio)
-    write_line_like_file(c.train_data_path, train_datas)
-    write_line_like_file(c.test_data_path, test_datas)
+    train_datas, test_datas = split_line_like_datas(datas, config_zhihu_dataset.test_data_split_ratio)
+    write_line_like_file(config_zhihu_dataset.train_data_path, train_datas)
+    write_line_like_file(config_zhihu_dataset.test_data_path, test_datas)
     tools_get_logger('preprocess').info(f'train dataset num {len(train_datas)} test dataset num {len(test_datas)} '
                                    f'test / train is {len(test_datas)/len(train_datas):.4f} '
                                    f'test / (train+test) is {len(test_datas)/len(all):.4f}')
@@ -212,7 +229,7 @@ def preprocess_concepnet():
 
 if __name__ == '__main__':
     # split_train_test_set()
+    # build_commonsense_memory()
     generate_pretrained_wv()
     # preprocess_concepnet()
-    # build_commonsense_memory()
     pass
