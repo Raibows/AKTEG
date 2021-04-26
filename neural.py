@@ -111,24 +111,27 @@ class Memory_neural(nn.Module):
 
         return m_t
 
-class Seq2Seq(nn.Module):
-    def __init__(self, encoder:Encoder, decoder:Decoder, memory_neural:Memory_neural, topic_padding_num,
-                 total_vocab_size, embed_size, pretrained_path, attention_size, device):
-        super(Seq2Seq, self).__init__()
-        self.encoder = encoder
-        self.decoder = decoder
-        self.memory_neural = memory_neural
-        self.total_vocab_size = total_vocab_size
-        self.embedding_layer = nn.Embedding(total_vocab_size, embed_size)
-        self.device = device
-        self.dropout = nn.Dropout(0.5)
-        self.W_1 = nn.Linear(encoder.output_size, attention_size, bias=False)
+class KnowledgeEnhancedSeq2Seq(nn.Module):
+    def __init__(self, vocab_size, embed_size, pretrained_wv_path, encoder_lstm_hidden, encoder_bid,
+                lstm_layer, attention_size, device):
+        super(KnowledgeEnhancedSeq2Seq, self).__init__()
+        self.pretrained_wv_path = pretrained_wv_path
+        self.encoder = Encoder(embed_size, lstm_layer, encoder_lstm_hidden, encoder_bid)
+        self.decoder = Decoder(vocab_size, embed_size, lstm_layer, self.encoder.output_size)
+        self.memory_neural = Memory_neural(embed_size, self.decoder.hidden_size)
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        self.W_1 = nn.Linear(self.encoder.output_size, attention_size, bias=False)
         self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
         self.W_3 = nn.Linear(attention_size, 1, bias=False)
+        self.vocab_size = vocab_size
+        self.device = device
+        self.dropout = nn.Dropout(0.5)
+
 
     def forward_only_embedding_layer(self, token):
         """
         expect [batch, essay_idx1] or [batch]
+        return [seqlen, batch, embed_size]
         """
         if token.dim() == 1:
             token = token.unsqueeze(1)
@@ -161,25 +164,26 @@ class Seq2Seq(nn.Module):
     def clear_memory_neural_step_state(self):
         self.memory_neural.step_mem_embeddings = None
 
-    def forward(self, topic_len_input:tuple, essay_input:torch.Tensor, mems:torch.Tensor, teacher_force_ratio=0.5):
+    def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
         self.clear_memory_neural_step_state()
-        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
-        batch_size = topic_len_input[0].shape[0]
+        batch_size = topic.shape[0]
         max_essay_len = essay_input.shape[1]
+        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
         teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
 
+        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
 
-        decoder_outputs = torch.zeros([max_essay_len, batch_size, self.total_vocab_size], device=self.device)
-
-        topics_embeddings = self.forward_only_embedding_layer(topic_len_input[0])
-        topics_representations, (h, c) = self.encoder.forward(topics_embeddings, topic_len_input[1]) #[topic_pad_num, batch, output_size]
+        topic_embeddings = self.forward_only_embedding_layer(topic)
+        topics_representations, (h, c) = self.encoder.forward(topic_embeddings, topic_len)
+        # [topic_pad_num, batch, output_size]
 
         mem_embeddings = self.forward_only_embedding_layer(mems)
+        # [mem_max_num, batch, embed_size]
 
-        # first input token is <sos>
+        # first input token is <go>
         # if lstm layer > 1, then select the topmost layer lstm memory c[-1] and hidden h[-1]
         now_input = essay_input[:, 0]
         now_input_embeddings = self.forward_only_embedding_layer(now_input)
@@ -188,40 +192,56 @@ class Seq2Seq(nn.Module):
 
         for now_step in range(1, max_essay_len):
             logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
-            decoder_outputs[now_step - 1] = logits
+            decoder_outputs[:, now_step - 1] = logits
             if teacher_mode_chocie[now_step] < teacher_force_ratio:
                 now_input = essay_input[:, now_step]
             else:
-                now_input = torch.multinomial(torch.softmax(logits, dim=1), num_samples=1)
-                # now_input = logits.argmax(1)
+                now_input = logits.argmax(dim=-1)
             now_input_embeddings = self.forward_only_embedding_layer(now_input)
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
                                                             topics_representations, mem_embeddings)
 
         logits, _ = self.decoder.forward(now_decoder_input, h, c)
-        decoder_outputs[-1] = logits
+        decoder_outputs[:, -1] = logits
         self.clear_memory_neural_step_state()
-        # [essay_len, batch, essay_vocab_size]
+        # [batch, essay_len, essay_vocab_size]
         return decoder_outputs
 
-def uniform_init_weights(m):
-    s, e = -0.08, 0.08
-    for name, param in m.named_parameters():
-        nn.init.uniform_(param.data, s, e)
-
-def init_param(self):
-    for param in self.parameters():
-        if param.requires_grad and len(param.shape) > 0:
-            stddev = 1 / math.sqrt(param.shape[0])
-            self.truncated_normal_(param, std=stddev)
-    if hasattr(self, 'embedding_layer'):
-        if self.pretrained_path:
-            self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(pretrained_path), dtype=torch.float))
+def init_param(self, init_way=None):
+    if init_way == 'uniform':
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.uniform_(param.data, -0.08, 0.08)
+    elif init_way == 'xavier':
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.xavier_normal(param.data)
+    elif init_way == 'noraml':
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.normal_(param.data, mean=0.0, std=0.08)
+    elif init_way == 'kaiming':
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.kaiming_uniform_(param.data, mode='fan_in', nonlinearity='relu')
+    if hasattr(self, 'embedding_layer') and hasattr(self, 'pretrained_wv_path'):
+        if self.pretrained_wv_path:
+            self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(self.pretrained_wv_path), dtype=torch.float))
         self.embedding_layer.weight.requires_grad = True
 
 
+
+
+
+
 if __name__ == '__main__':
+
+    pass
+
+    # print(outs.argmax(dim=2))
+
+
 
 
 
