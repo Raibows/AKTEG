@@ -191,7 +191,7 @@ class ZHIHU_dataset(Dataset):
 
     def convert_idx2word(self, idxs, sep=False):
         temp = [self.idx2word[i] for i in idxs]
-        if sep and isinstance(sep, str):
+        if isinstance(sep, str):
             return sep.join(temp)
         return temp
 
@@ -232,6 +232,16 @@ class ZHIHU_dataset(Dataset):
             torch.tensor(real_len, dtype=torch.int64)
         return essay_input, essay_target, real_len
 
+    def convert_mem2idx(self, mems, ret_tensor=False):
+        temp = [self.word2idx['<unk>'] for _ in mems]
+        for i, m in enumerate(mems):
+            if m in self.word2idx: temp[i] = self.word2idx[m]
+
+        if ret_tensor:
+            return torch.tensor(temp, dtype=torch.int64)
+        return temp
+
+
     def shuffle_memory(self):
         data_mems = [None for _ in range(len(self.data_topics))]
         for i in range(len(self)):
@@ -246,7 +256,7 @@ class ZHIHU_dataset(Dataset):
         mems = ['<unk>' for _ in range(self.topic_mem_num_all)]
         has_set = set()
         for t in topics:
-            if self.memory_corpus[t][0] != '<unk>':
+            if t in self.mem_corpus_path and self.memory_corpus[t][0] != '<unk>':
                 has_set.add(t)
         if len(has_set) != 0:
             mems = []
@@ -257,7 +267,7 @@ class ZHIHU_dataset(Dataset):
                 temp = np.random.choice(self.memory_corpus[t], n, replace=False, p=self.weight_for_mem_choice)
                 mems.extend(temp)
 
-        return self.convert_word2idx(mems, ret_tensor=ret_tensor)
+        return self.convert_mem2idx(mems, ret_tensor=ret_tensor)
 
     def print_info(self):
         tools_get_logger('data').info(

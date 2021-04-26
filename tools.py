@@ -21,15 +21,14 @@ def tools_get_logger(name:str='test'):
         tools_loggers_set[name] = root
     return tools_loggers_set[name]
 
-tools_tensorboard_writer_judger = None
+tools_tensorboard_writer = None
 def tools_get_tensorboard_writer(log_dir=None):
-    global tools_tensorboard_writer_judger
+    global tools_tensorboard_writer
     if not log_dir:
         log_dir = f'./logs/{tools_get_time()}'
-    if not tools_tensorboard_writer_judger:
-        tools_tensorboard_writer_judger = True
-        writer = SummaryWriter(log_dir=log_dir)
-    return writer, log_dir
+    if not tools_tensorboard_writer:
+        tools_tensorboard_writer = SummaryWriter(log_dir=log_dir)
+    return tools_tensorboard_writer, log_dir
 
 
 def tools_get_time():
