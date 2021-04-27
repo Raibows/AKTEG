@@ -2,6 +2,39 @@ import torch
 import torch.nn as nn
 from tools import tools_load_pickle_obj, tools_get_logger
 
+class CNNDiscriminator(nn.Module):
+    def __init__(self, label_num, vocab_size, embed_size, channel_nums:list,
+                 kernel_sizes:list):
+        super(CNNDiscriminator, self).__init__()
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        self.embedding_layer.requires_grad_()
+
+        self.pool = nn.AdaptiveMaxPool1d(output_size=1)
+        self.convs = nn.ModuleList()
+        for c, k in zip(channel_nums, kernel_sizes):
+            self.convs.append(
+                nn.Sequential(
+                    nn.Conv1d(in_channels=embed_size, out_channels=c,
+                              kernel_size=k),
+                    nn.BatchNorm1d(c)
+                )
+            )
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(sum(channel_nums), label_num)
+
+    def forward(self, inputs_x):
+        embeddings = self.dropout(self.embedding_layer(inputs_x))
+        embeddings = embeddings.permute(0, 2, 1)
+        # [batch, embed_size, seq_len]
+        outs = torch.cat(
+            [self.pool(torch.relu(conv(embeddings))).squeeze(-1) for conv in self.convs], dim=1
+        )
+        outs = self.dropout(outs)
+
+        logits = self.fc(outs)
+
+        return logits
+
 class Encoder(nn.Module):
     def __init__(self, embed_size, layer_num, hidden_size, is_bid):
         super(Encoder, self).__init__()
@@ -239,7 +272,24 @@ if __name__ == '__main__':
 
     # print(outs.argmax(dim=2))
 
+    x = torch.randint(0, 100, [4, 10])
+    model = CNNDiscriminator(label_num=3,
+                             vocab_size=100,
+                             embed_size=64,
+                             channel_nums=[50, 60, 70, 80, 90, 100, 128, 256, 128],
+                             kernel_sizes=[1, 2, 3, 4, 5, 6, 7, 8, 9])
+    logits = model.forward(x)
+    criterion = nn.BCEWithLogitsLoss()
+    target = torch.rand([4, 3])
+    # print(logits)
+    # print(target)
 
+    loss = criterion(logits, target)
+    loss.backward()
+
+
+
+    print(loss)
 
 
 
