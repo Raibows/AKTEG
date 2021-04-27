@@ -11,7 +11,6 @@ class Encoder(nn.Module):
                             dropout=0.5 if layer_num > 1 else 0.0)
         self.direction = 2 if is_bid else 1
         self.output_size = self.direction * self.hidden_size
-        self.dropout = nn.Dropout(0.5)
 
     def forward(self, *inputs):
         # (sen_embeddings, sen_len)
@@ -55,9 +54,9 @@ class Decoder(nn.Module):
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
+        outs = self.dropout(outs)
 
         logits = self.fc(outs.squeeze(0))
-        logits = self.dropout(logits)
 
         return logits, (h, c)
 
@@ -74,7 +73,6 @@ class Memory_neural(nn.Module):
         self.V2 = nn.Linear(embed_size, embed_size, bias=False)
         self.step_mem_embeddings = None
         self.embed_size = embed_size
-        self.dropout = nn.Dropout(0.5)
 
     def update_memory(self, decoder_embeddings):
         """
@@ -85,16 +83,16 @@ class Memory_neural(nn.Module):
         decoder_embeddings = decoder_embeddings.squeeze()
         batch_size = self.step_mem_embeddings.shape[0]
         seq_len = self.step_mem_embeddings.shape[1]
-        M_t_temp = self.dropout(self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1)) \
-                   + self.dropout(self.V1(decoder_embeddings).reshape(batch_size, 1, self.embed_size))
+        M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
+                   + self.V1(decoder_embeddings.reshape(batch_size, 1, self.embed_size))
         M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
 
-        gate = self.dropout(self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1)) \
-                   + self.dropout(self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size))
+        gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
+                   + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
         gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
 
         self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings * (1 - gate)
-        self.step_mem_embeddings = self.dropout(self.step_mem_embeddings)
+        self.step_mem_embeddings = self.step_mem_embeddings
 
 
     def forward(self, begin_embeddings, decoder_hidden_s_t_1):
@@ -103,9 +101,9 @@ class Memory_neural(nn.Module):
             # reshape embeddings to [batch, len, embed_size]
 
 
-        v_t = torch.tanh(self.dropout(self.W(decoder_hidden_s_t_1)))
+        v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
         # v_t here is a column vector [batch, v_t] using torch.batch_multiplication
-        q_t = torch.softmax(self.dropout(self.step_mem_embeddings @ v_t.unsqueeze(2)), dim=1)
+        q_t = torch.softmax(self.step_mem_embeddings @ v_t.unsqueeze(2), dim=1)
         # q_t here is a column vector [batch, q_t]
         m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings
 
@@ -148,11 +146,11 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         # calculate c_{t}
         batch_size = topics_representations.shape[1]
         topic_num = topics_representations.shape[0]
-        pre_t_matrix = self.dropout(self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1)))
+        pre_t_matrix = self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1))
         pre_t_matrix = pre_t_matrix.reshape(batch_size, topic_num, -1)
-        query_t = self.dropout(self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(1))
+        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(1)
         # query_t [batch, 1, temp] for using add broadcast
-        e_t_i = self.dropout(self.W_3.forward(torch.tanh(pre_t_matrix + query_t).reshape(batch_size * topic_num, -1))).reshape(batch_size, topic_num)
+        e_t_i = self.W_3.forward(torch.tanh(pre_t_matrix + query_t).reshape(batch_size * topic_num, -1)).reshape(batch_size, topic_num)
         alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num]
         c_t = topics_representations.reshape(batch_size, -1, topic_num) @ alpha_t_i.unsqueeze(2)
 

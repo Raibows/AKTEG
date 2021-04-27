@@ -12,8 +12,8 @@ from config import config_zhihu_dataset, config_train, config_seq2seq, config_co
 
 
 tools_setup_seed(667)
-# device = torch.device(config_train.device_name)
-device = torch.device('cuda:0')
+device = torch.device(config_train.device_name)
+# device = torch.device('cuda:0')
 tools_get_logger('train').info(f"using device {config_train.device_name}")
 
 train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
@@ -38,7 +38,7 @@ test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch
                                  num_workers=config_train.dataloader_num_workers, pin_memory=True)
 
 tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
-                               f"test/all {len(test_all_dataset)/(len(test_all_dataset)+len(train_all_dataset)):.4f}")
+                               f"test/train {len(test_all_dataset)/len(train_all_dataset):.4f}")
 
 
 seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
@@ -58,8 +58,8 @@ seq2seq.eval()
 
 optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
 criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.9, patience=3, min_lr=6e-6)
-warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 3 else 1)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
+warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 2 else 1)
 
 
 
@@ -170,7 +170,7 @@ if __name__ == '__main__':
         valid_loss = 0.0
         valid_loss_t = 0.0
         if ep >= 9:
-            begin_teacher_force_ratio *= 0.96
+            begin_teacher_force_ratio *= 0.99
             begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
 
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):

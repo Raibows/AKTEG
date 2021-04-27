@@ -1,8 +1,8 @@
 
 
 class config_train:
-    device_name = 'cuda:0'
-    epoch = 100
+    device_name = 'cuda:3'
+    epoch = 150
     batch_size = 128
     learning_rate = 1e-3
     fold_k = 1
@@ -52,11 +52,11 @@ class config_zhihu_dataset:
 class config_seq2seq:
     model_save_fmt = './results/seq2seq/{}/epoch_{}_test_loss_{:.5f}.pt'
     model_load_path = None
-    encoder_lstm_hidden_size = 64
+    encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True
     lstm_layer_num = 1
 
-    attention_size = 64
+    attention_size = 128
     teacher_force_rate = 1.0
 
     embedding_size = 200
