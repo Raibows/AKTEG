@@ -185,13 +185,15 @@ if __name__ == '__main__':
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
         test_loss = validation(ep, train_all_dataset, test_all_dataloader,
                                prediction_path=prediction_path)
-        # train_all_dataset.shuffle_memory()
-
-        scheduler.step(test_loss)
-        warmup_scheduler.step()
-
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
+        # train_all_dataset.shuffle_memory()
+
+        # because we don't care the mle_loss on test_dataset
+        scheduler.step(train_loss)
+        warmup_scheduler.step()
+
+
         if valid_loss > 0.0:
             writer.add_scalar('Loss/valid', valid_loss, ep)
         writer.add_scalar('Loss/train', train_loss, ep)
