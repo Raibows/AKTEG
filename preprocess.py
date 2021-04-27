@@ -33,7 +33,7 @@ def k_fold_split(all_dataset, batch_size, k=5):
     import random
     import torch
     from torch.utils.data import DataLoader
-    from config import config_train
+    from config import config_train_generator, config_train_public
     all_size = len(all_dataset)
     fold_size = [all_size // k] * (k-1) + [all_size - (all_size // k) * (k-1)]
     all_set = set([i for i in range(all_size)])
@@ -46,15 +46,15 @@ def k_fold_split(all_dataset, batch_size, k=5):
     kfolds = []
     for fs in fold_size:
         if k == 1:
-            kfolds.append((DataLoader(all_dataset, config_train.batch_size, shuffle=True,
-                                      num_workers=config_train.dataloader_num_workers, pin_memory=True), None))
+            kfolds.append((DataLoader(all_dataset, config_train_generator.batch_size, shuffle=True,
+                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=True), None))
             return kfolds
         test = torch.utils.data.dataset.Subset(all_dataset, list(fs))
         train = torch.utils.data.dataset.Subset(all_dataset, list(all_set-fs))
         kfolds.append((
-            DataLoader(train, batch_size=batch_size, num_workers=config_train.dataloader_num_workers,
+            DataLoader(train, batch_size=batch_size, num_workers=config_train_public.dataloader_num_workers,
                        shuffle=True, pin_memory=True),
-            DataLoader(test, batch_size=batch_size, num_workers=config_train.dataloader_num_workers, pin_memory=True)
+            DataLoader(test, batch_size=batch_size, num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
         ))
     return kfolds
 

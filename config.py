@@ -1,13 +1,25 @@
 
-
-class config_train:
+class config_train_public:
     device_name = 'cuda:3'
-    epoch = 150
+    dataloader_num_workers = 4
+
+class config_train_discriminator:
+    generate_batch_num = 256
+    generate_batch_size = 256 # num all is generate_batch_num * generate_batch_size
     batch_size = 128
+    epoch = 50
+    label_smooth = 0.9
+    label_eps = 0.1
+    learning_rate = 1e-3
+    test_data_split_ratio = 1 / 6
+    is_save_model = False
+
+
+class config_train_generator:
+    epoch = 150
+    batch_size = 192
     learning_rate = 1e-3
     fold_k = 1
-    dataloader_num_workers = 4
-    is_load_model = False
     is_save_model = True
     grad_clip_norm_type = 2.0
     grad_clip_max_norm = 1.0
@@ -51,7 +63,7 @@ class config_zhihu_dataset:
 
 class config_seq2seq:
     model_save_fmt = './results/seq2seq/{}/epoch_{}_test_loss_{:.5f}.pt'
-    model_load_path = None
+    model_load_path = 'results/seq2seq/21-04-27-12_26_47/epoch_2_test_loss_7.28235.pt'
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True
     lstm_layer_num = 1
@@ -64,4 +76,11 @@ class config_seq2seq:
         'tencent': './zhihu_dataset/tencent.seq2seq.wv',
         'zhihu': './zhihu_dataset/zhihu.seq2seq.wv'
     }
+
+class config_wordcnn:
+    model_save_fmt = './results/wordcnn/{}/epoch_{}_train_acc_{:.5f}.pt'
+    model_load_path = None
+    embed_size = 64
+    channel_nums = [128, 256, 256, 256, 256, 128, 128, 128, 256]
+    kernel_sizes = [1, 2, 3, 4, 5, 10, 30, 60, 80]
 

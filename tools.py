@@ -21,14 +21,14 @@ def tools_get_logger(name:str='test'):
         tools_loggers_set[name] = root
     return tools_loggers_set[name]
 
-tools_tensorboard_writer = None
-def tools_get_tensorboard_writer(log_dir=None):
+tools_tensorboard_writers = {}
+def tools_get_tensorboard_writer(log_dir=None, dir_pre='public'):
     global tools_tensorboard_writer
     if not log_dir:
-        log_dir = f'./logs/{tools_get_time()}'
-    if not tools_tensorboard_writer:
-        tools_tensorboard_writer = SummaryWriter(log_dir=log_dir)
-    return tools_tensorboard_writer, log_dir
+        log_dir = f'./logs/{tools_get_time()}/{dir_pre}'
+    if dir_pre not in tools_tensorboard_writers:
+        tools_tensorboard_writers[dir_pre] = SummaryWriter(log_dir=log_dir)
+    return tools_tensorboard_writers[dir_pre], log_dir
 
 
 def tools_get_time():

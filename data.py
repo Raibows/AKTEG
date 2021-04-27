@@ -301,6 +301,27 @@ class ZHIHU_dataset(Dataset):
         self.data_topics[key], self.len_topics[key], self.data_mems[key], self.data_essays['input'][key], \
         self.data_essays['target'][key], self.len_essays[key] = value
 
+class InputLabel_dataset(Dataset):
+    def __init__(self, inputs:list, labels:list, dtypes={'input': torch.int64, 'label': torch.float}):
+        assert len(inputs) == len(labels)
+        if not isinstance(inputs[0], torch.Tensor):
+            inputs = [torch.tensor(x, dtype=dtypes['input']) for x in inputs]
+        if not isinstance(labels[0], torch.Tensor):
+            labels = [torch.tensor(l, dtype=dtypes['label']) for l in labels]
+
+        self.inputs = inputs
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, item):
+        return self.inputs[item], self.labels[item]
+
+    def __setitem__(self, key, value):
+        self.inputs[key], self.labels[key] = value
+
+
 
 
 if __name__ == '__main__':
