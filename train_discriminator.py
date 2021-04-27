@@ -70,6 +70,7 @@ def train_discriminator_process(writer, train_all_dataset, epoch, batch_size, ge
     criterion = nn.BCEWithLogitsLoss().to(device)
     optimizer = optim.Adam(discriminator.parameters(), lr=ctd.learning_rate)
     metric = TrainDiscriminatorMetric(label_dict['fake'])
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
 
     @torch.no_grad()
     def prepare_datas(label_smooth=0.9, eps=0.1):
@@ -126,6 +127,7 @@ def train_discriminator_process(writer, train_all_dataset, epoch, batch_size, ge
         writer.add_scalar('Test/acc_real', acc_real, ep)
         writer.add_scalar('Test/loss', loss_mean, ep)
         metric.reset()
+        scheduler.step(acc_all)
         if acc_all > best_acc and ctd.is_save_model:
             best_acc = acc_all
             save_path = config_wordcnn.model_save_fmt.format(start_time, ep, acc_all)

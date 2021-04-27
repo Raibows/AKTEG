@@ -1,69 +1,23 @@
 import torch
 from tqdm import tqdm
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 import random
-from data import ZHIHU_dataset
-from neural import KnowledgeEnhancedSeq2Seq, init_param
+from data import ZHIHU_dataset, InputLabel_dataset
+from neural import KnowledgeEnhancedSeq2Seq, CNNDiscriminator, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
-from config import config_zhihu_dataset, config_train, config_seq2seq, config_concepnet
+from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 
 
 tools_setup_seed(667)
-device = torch.device(config_train.device_name)
+device = torch.device(config_train_public.device_name)
 # device = torch.device('cuda:0')
-tools_get_logger('train').info(f"using device {config_train.device_name}")
-
-train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
-                                  topic_num_limit=config_zhihu_dataset.topic_num_limit,
-                                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
-                                  vocab_size=config_zhihu_dataset.vocab_size,
-                                  essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                  prior=None, encode_to_tensor=True,
-                                  mem_corpus_path=config_concepnet.memory_corpus_path)
-train_all_dataset.print_info()
-
-test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
-                                 topic_num_limit=config_zhihu_dataset.topic_num_limit,
-                                 topic_padding_num=config_zhihu_dataset.topic_padding_num,
-                                 vocab_size=config_zhihu_dataset.vocab_size,
-                                 essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                 mem_corpus_path=config_concepnet.memory_corpus_path,
-                                 prior=train_all_dataset.get_prior(), encode_to_tensor=True)
-test_all_dataset.print_info()
-
-test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size,
-                                 num_workers=config_train.dataloader_num_workers, pin_memory=True)
-
-tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
-                               f"test/train {len(test_all_dataset)/len(train_all_dataset):.4f}")
+tools_get_logger('train_G').info(f"using device {config_train_public.device_name}")
 
 
-seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                   embed_size=config_seq2seq.embedding_size,
-                                   pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
-                                   encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-                                   encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-                                   lstm_layer=config_seq2seq.lstm_layer_num,
-                                   attention_size=config_seq2seq.attention_size,
-                                   device=device)
-
-init_param(seq2seq, init_way=config_train.model_init_way)
-if config_train.is_load_model:
-    seq2seq.load_state_dict(torch.load(config_seq2seq.model_load_path, map_location=device))
-seq2seq.to(device)
-seq2seq.eval()
-
-optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train.learning_rate)
-criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
-warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < 2 else 1)
-
-
-
-def train(epoch, train_all_dataset, dataset_loader, teacher_force_ratio):
+def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force_ratio):
     seq2seq.train()
     loss_mean = 0.0
     with tqdm(total=len(dataset_loader), desc=f'train{epoch}') as pbar:
@@ -91,8 +45,8 @@ def train(epoch, train_all_dataset, dataset_loader, teacher_force_ratio):
             optimizer.zero_grad()
             loss = criterion(logits, essay_target.view(-1))
             loss.backward()
-            nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=config_train.grad_clip_max_norm,
-                                     norm_type=config_train.grad_clip_norm_type)
+            nn.utils.clip_grad_norm_(seq2seq.parameters(), max_norm=config_train_generator.grad_clip_max_norm,
+                                     norm_type=config_train_generator.grad_clip_norm_type)
             optimizer.step()
             pbar.set_postfix_str(f"loss: {loss.item():.4f}")
             loss_mean += loss.item()
@@ -101,7 +55,7 @@ def train(epoch, train_all_dataset, dataset_loader, teacher_force_ratio):
     return loss_mean / len(dataset_loader)
 
 @torch.no_grad()
-def validation(epoch, train_all_dataset, dataset_loader, prediction_path=None):
+def test_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, prediction_path=None):
     seq2seq.eval()
     loss_mean = 0.0
     teacher_force_ratio = 0.0
@@ -155,68 +109,125 @@ def validation(epoch, train_all_dataset, dataset_loader, prediction_path=None):
 
     return loss_mean / len(dataset_loader)
 
+def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir, k_fold):
+    test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train_generator.batch_size,
+                                     num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
+
+    tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
+                                   f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
 
+    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
+    warmup_epoch = 3
+    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1)
 
-if __name__ == '__main__':
-    writer, log_dir = tools_get_tensorboard_writer()
+
     best_save_loss = int(1e9)
     best_save_path = 'no_saved'
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     train_start_time = tools_get_time()
-    for ep in range(config_train.epoch):
-        kfolds = k_fold_split(train_all_dataset, config_train.batch_size, k=config_train.fold_k)
+    kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
+    for ep in range(epoch_num):
         train_loss = 0.0
         valid_loss = 0.0
         valid_loss_t = 0.0
         if ep >= 9:
             begin_teacher_force_ratio *= 0.99
             begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
-
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):
-            train_loss_t = train(ep, train_all_dataset, train_dataloader, begin_teacher_force_ratio)
+            train_loss_t = train_generator(ep, train_all_dataset, train_dataloader, seq2seq,
+                                           optimizer, criterion, begin_teacher_force_ratio)
             train_loss += train_loss_t
             if valid_dataloader:
-                valid_loss_t = validation(train_all_dataset, valid_dataloader)
+                valid_loss_t = test_generator(ep, train_all_dataset, valid_dataloader, seq2seq,
+                                              optimizer, criterion, prediction_path=None)
                 valid_loss += valid_loss_t
             tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        test_loss = validation(ep, train_all_dataset, test_all_dataloader,
-                               prediction_path=prediction_path)
+        test_loss = test_generator(ep, train_all_dataset, test_all_dataloader, seq2seq,
+                                              optimizer, criterion, prediction_path=prediction_path)
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
         # train_all_dataset.shuffle_memory()
 
         # because we don't care the mle_loss on test_dataset
-        scheduler.step(train_loss)
-        warmup_scheduler.step()
-
+        if ep > warmup_epoch:
+            scheduler.step(train_loss)
+        else:
+            warmup_scheduler.step()
 
         if valid_loss > 0.0:
             writer.add_scalar('Loss/valid', valid_loss, ep)
         writer.add_scalar('Loss/train', train_loss, ep)
         writer.add_scalar('Loss/test', test_loss, ep)
-        del kfolds
         with open(prediction_path, 'a', encoding='utf-8') as file:
             file.write(f'epoch {ep}\ntrain_loss{train_loss}\nvalid_loss{valid_loss}\ntest_loss{test_loss}')
 
         tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f} '
                                        f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}')
 
-        if config_train.is_save_model and test_loss < best_save_loss:
+        if config_train_generator.is_save_model and test_loss < best_save_loss:
             save_path = config_seq2seq.model_save_fmt.format(train_start_time, ep, test_loss)
             best_save_path = save_path
             if best_save_loss == int(1e9):
                 tools_make_dir(save_path)
-                tools_copy_file('./config.py', save_path+'.config.py')
+                tools_copy_file('./config.py', save_path + '.config.py')
             torch.save(seq2seq.state_dict(), save_path)
             best_save_loss = test_loss
-            tools_get_logger('train').info(f"epoch {ep} saving model to {save_path}, now best_test_loss {best_save_loss:.4f}")
+            tools_get_logger('train').info(
+                f"epoch {ep} saving model to {save_path}, now best_test_loss {best_save_loss:.4f}")
+        # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
 
-    tools_get_logger('train').info(f"{config_train.epoch} epochs done \n"
+    tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
                                    f"the best model has saved to {best_save_path} \n"
                                    f"the prediction ")
+
+
+if __name__ == '__main__':
+    train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                      topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                      topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                      vocab_size=config_zhihu_dataset.vocab_size,
+                                      essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                      prior=None, encode_to_tensor=True,
+                                      mem_corpus_path=config_concepnet.memory_corpus_path)
+    train_all_dataset.print_info()
+    test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
+                                     topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                     topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                     vocab_size=config_zhihu_dataset.vocab_size,
+                                     essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                     mem_corpus_path=config_concepnet.memory_corpus_path,
+                                     prior=train_all_dataset.get_prior(), encode_to_tensor=True)
+    test_all_dataset.print_info()
+    seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+                                       embed_size=config_seq2seq.embedding_size,
+                                       pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
+                                       encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
+                                       encoder_bid=config_seq2seq.encoder_lstm_is_bid,
+                                       lstm_layer=config_seq2seq.lstm_layer_num,
+                                       attention_size=config_seq2seq.attention_size,
+                                       device=device)
+
+    init_param(seq2seq, init_way=config_train_generator.model_init_way)
+
+    if config_seq2seq.model_load_path:
+        seq2seq.load_state_dict(torch.load(config_seq2seq.model_load_path, map_location=device))
+    seq2seq.to(device)
+    seq2seq.eval()
+
+    writer, log_dir = tools_get_tensorboard_writer(dir_pre='train_G')
+
+    train_generator_process(epoch_num=config_train_generator.epoch,
+                            batch_size=config_train_generator.batch_size,
+                            writer=writer, log_dir=log_dir,
+                            k_fold=config_train_generator.fold_k,
+                            train_all_dataset=train_all_dataset,
+                            test_all_dataset=test_all_dataset,
+                            seq2seq=seq2seq)
     writer.flush()
     writer.close()

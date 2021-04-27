@@ -4,14 +4,14 @@ from torch.utils.data import DataLoader
 from data import ZHIHU_dataset
 from neural import KnowledgeEnhancedSeq2Seq
 from tools import tools_get_logger, tools_setup_seed, tools_make_dir, tools_to_gpu, tools_get_time
-from config import config_zhihu_dataset, config_train, config_seq2seq, config_concepnet
+from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_concepnet, config_train_public
 import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', help='model load path', default=config_seq2seq.model_load_path)
 parser.add_argument('--result', help='the result path', default=f'{tools_get_time()}.result')
 args = parser.parse_args()
-
+assert args.model and args.result
 
 
 @torch.no_grad()
@@ -73,11 +73,11 @@ if __name__ == '__main__':
                                      prior=train_all_dataset.get_prior(), encode_to_tensor=True)
     test_all_dataset.print_info()
 
-    test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train.batch_size,
-                                     num_workers=config_train.dataloader_num_workers, pin_memory=True)
+    test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train_generator.batch_size,
+                                     num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
 
     tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
-                                   f"test/all {len(test_all_dataset) / (len(test_all_dataset) + len(train_all_dataset)):.4f}")
+                                   f"test/all {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
     seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
                                        embed_size=config_seq2seq.embedding_size,
@@ -87,9 +87,8 @@ if __name__ == '__main__':
                                        lstm_layer=config_seq2seq.lstm_layer_num,
                                        attention_size=config_seq2seq.attention_size,
                                        device=device)
-    if config_train.is_load_model:
-        tools_get_logger('predict').info(f"loading model from {args.model}")
-        seq2seq.load_state_dict(torch.load(args.model, map_location=device))
+    tools_get_logger('predict').info(f"loading model from {args.model}")
+    seq2seq.load_state_dict(torch.load(args.model, map_location=device))
     seq2seq.to(device)
     seq2seq.eval()
 

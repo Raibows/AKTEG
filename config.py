@@ -14,15 +14,14 @@ class config_train_discriminator:
     test_data_split_ratio = 1 / 6
     is_save_model = False
 
-
 class config_train_generator:
     epoch = 150
-    batch_size = 192
+    batch_size = 128
     learning_rate = 1e-3
     fold_k = 1
     is_save_model = True
     grad_clip_norm_type = 2.0
-    grad_clip_max_norm = 1.0
+    grad_clip_max_norm = 10.0
     model_init_way = 'noraml'
 
 class config_concepnet:
@@ -63,7 +62,7 @@ class config_zhihu_dataset:
 
 class config_seq2seq:
     model_save_fmt = './results/seq2seq/{}/epoch_{}_test_loss_{:.5f}.pt'
-    model_load_path = 'results/seq2seq/21-04-27-12_26_47/epoch_2_test_loss_7.28235.pt'
+    model_load_path = None
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True
     lstm_layer_num = 1
