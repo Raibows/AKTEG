@@ -241,9 +241,8 @@ class ZHIHU_dataset(Dataset):
             return torch.tensor(temp, dtype=torch.int64)
         return temp
 
-
     def shuffle_memory(self):
-        data_mems = [None for _ in range(len(self.data_topics))]
+        data_mems = [None for _ in self.data_topics]
         for i in range(len(self)):
             # because only convert it to idxs and then reverse it to words
             # which will let unk_topic_word be encoded to <unk> that memory_corpus knows
@@ -256,7 +255,7 @@ class ZHIHU_dataset(Dataset):
         mems = ['<unk>' for _ in range(self.topic_mem_num_all)]
         has_set = set()
         for t in topics:
-            if t in self.mem_corpus_path and self.memory_corpus[t][0] != '<unk>':
+            if t in self.memory_corpus and self.memory_corpus[t][0] != '<unk>':
                 has_set.add(t)
         if len(has_set) != 0:
             mems = []
