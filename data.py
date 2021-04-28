@@ -189,24 +189,35 @@ class ZHIHU_dataset(Dataset):
         if self.memory_corpus:
             self.data_mems = self.shuffle_memory()
 
-    def convert_idx2word(self, idxs, sep=False):
-        temp = [self.idx2word[i] for i in idxs]
+    def convert_idx2word(self, idxs, sep=False, end_token=None):
+        temp = []
+        for i in idxs:
+            if i == end_token: break
+            temp.append(self.idx2word[i])
         if isinstance(sep, str):
             return sep.join(temp)
         return temp
+
+    def unpadded_idxs(self, idxs, end_token='<eos>'):
+        temp = []
+        for i in idxs:
+            if i == end_token: break
+            temp.append(i)
+        return temp
+
 
     def convert_idx2topic(self, idxs):
         return [self.idx2word[i] for i in idxs]
 
     def convert_topic2idx(self, topics, ret_tensor):
+        # will remove all the unk topic and shift them to the left then padding to limit
         padding_num = self.topic_padding_num
         temp = [self.word2idx['<pad>'] for _ in range(padding_num)]
-        real_num = min(len(topics), padding_num)
+        real_num = 0
         for i, one in enumerate(topics[:padding_num]):
-            if one not in self.topic2idx:
-                temp[i] = self.word2idx['<unk>']
-            else:
-                temp[i] = self.topic2idx[one]
+            if one in self.topic2idx:
+                temp[real_num] = self.topic2idx[one]
+                real_num += 1
         if ret_tensor:
             return torch.tensor(temp, dtype=torch.int64), torch.tensor(real_num, dtype=torch.int64)
         return temp, real_num

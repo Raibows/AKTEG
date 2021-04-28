@@ -70,3 +70,14 @@ def tools_load_pickle_obj(path):
     tools_get_logger('tools').info(f"loading obj from {path}")
     with open(path, 'rb') as file:
         return pickle.load(file)
+
+def tools_batch_idx2words(idxs, idx2word:dict):
+    if isinstance(idxs, torch.Tensor):
+        idxs = idxs.tolist()
+    if isinstance(idxs[0], list):
+        temp = [' '.join([idx2word[i] for i in x]) for x in idxs]
+    else:
+        temp = ' '.join([idx2word[i] for i in idxs])
+    return temp
+
+

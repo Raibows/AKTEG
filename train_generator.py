@@ -6,17 +6,17 @@ import random
 from data import ZHIHU_dataset
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
+    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
+parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='simple')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 args = parser.parse_args()
-if not args.device.startwith('cuda:'):
+if not args.device.startswith('cuda:'):
     args.device = config_train_public.device_name
 
 tools_setup_seed(667)
@@ -186,7 +186,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                        f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
                                        f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}')
 
-        if config_train_generator.is_save_model and bleu4 < best_save_bleu4:
+        if config_train_generator.is_save_model and bleu4 > best_save_bleu4:
             save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, bleu4)
             best_save_path = save_path
             if best_save_metric == None:
