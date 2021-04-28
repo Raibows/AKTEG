@@ -178,10 +178,10 @@ class Memory_neural(nn.Module):
         # using gate mechanism is for step-by-step update
         # still needs grad descent
         self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
-        self.U1 = nn.Linear(embed_size, embed_size, bias=False)
-        self.V1 = nn.Linear(embed_size, embed_size, bias=False)
-        self.U2 = nn.Linear(embed_size, embed_size, bias=False)
-        self.V2 = nn.Linear(embed_size, embed_size, bias=False)
+        self.U1 = nn.Linear(embed_size, embed_size, bias=True)
+        self.V1 = nn.Linear(embed_size, embed_size, bias=True)
+        self.U2 = nn.Linear(embed_size, embed_size, bias=True)
+        self.V2 = nn.Linear(embed_size, embed_size, bias=True)
         self.step_mem_embeddings = None
         self.embed_size = embed_size
 
@@ -203,13 +203,12 @@ class Memory_neural(nn.Module):
         gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
 
         self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings.detach() * (1 - gate)
-        self.step_mem_embeddings = self.step_mem_embeddings
+        self.step_mem_embeddings[self.step_mem_embeddings.isinf()] = 1e-31
+        self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
 
-
-    def forward(self, begin_embeddings, decoder_hidden_s_t_1):
-        if self.step_mem_embeddings == None:
-            self.step_mem_embeddings = begin_embeddings.permute(1, 0, 2)
-            # reshape embeddings to [batch, len, embed_size]
+    def forward(self, decoder_hidden_s_t_1):
+        # self.step_mem_embeddings
+        # reshape embeddings to [batch, len, embed_size]
 
 
         v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
@@ -248,7 +247,7 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         return embeddings
 
     def before_feed_to_decoder(self, last_step_output_token_embeddings, last_step_decoder_lstm_hidden,
-                               last_step_decoder_lstm_memory, topics_representations, mem_embeddings):
+                               last_step_decoder_lstm_memory, topics_representations):
         # mems [batch, mem_idx_per_sample]
 
         # calculate e_(y_{t-1})
@@ -266,18 +265,22 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         c_t = topics_representations.reshape(batch_size, -1, topic_num) @ alpha_t_i.unsqueeze(2)
 
         # calculate m_{t}
-        m_t = self.memory_neural.forward(mem_embeddings, last_step_decoder_lstm_hidden)
+        m_t = self.memory_neural.forward(last_step_decoder_lstm_hidden)
 
         return torch.cat([e_y_t_1.squeeze(), c_t.squeeze(), m_t.squeeze()], dim=1)
 
     def clear_memory_neural_step_state(self):
         self.memory_neural.step_mem_embeddings = None
+    
+    def init_memory_neural_step_state(self, begin_embeddings):
+        self.memory_neural.step_mem_embeddings = begin_embeddings.permute(1, 0, 2)
+        # step_mem_embeddings
+        # reshape embeddings to [batch, len, embed_size]
 
     def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
-        self.clear_memory_neural_step_state()
         batch_size = topic.shape[0]
         max_essay_len = essay_input.shape[1]
         teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
@@ -291,13 +294,15 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
 
         mem_embeddings = self.forward_only_embedding_layer(mems)
         # [mem_max_num, batch, embed_size]
+        self.init_memory_neural_step_state(mem_embeddings)
 
         # first input token is <go>
         # if lstm layer > 1, then select the topmost layer lstm memory c[-1] and hidden h[-1]
         now_input = essay_input[:, 0]
         now_input_embeddings = self.forward_only_embedding_layer(now_input)
+        self.memory_neural.update_memory(now_input_embeddings)
         now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                        topics_representations, mem_embeddings)
+                                                        topics_representations)
 
         for now_step in range(1, max_essay_len):
             logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
@@ -309,7 +314,7 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
             now_input_embeddings = self.forward_only_embedding_layer(now_input)
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                            topics_representations, mem_embeddings)
+                                                            topics_representations)
 
         logits, _ = self.decoder.forward(now_decoder_input, h, c)
         decoder_outputs[:, -1] = logits

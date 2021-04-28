@@ -13,7 +13,7 @@ from metric import MetricGenerator
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='simple')
+parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 args = parser.parse_args()
 if not args.device.startswith('cuda:'):
@@ -194,6 +194,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                 tools_copy_file('./config.py', save_path + '.config.py')
             torch.save(seq2seq.state_dict(), save_path)
             best_save_metric = [test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
+            best_save_bleu4 = bleu4
             tools_get_logger('train').info(
                 f"epoch {ep} saving model to {save_path}, now best_bleu4 {best_save_bleu4:.4f}")
         # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
