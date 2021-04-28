@@ -35,6 +35,84 @@ class CNNDiscriminator(nn.Module):
 
         return logits
 
+class simple_seq2seq(nn.Module):
+    def __init__(self, layer_num, hidden_size, vocab_size, embed_size, device):
+        super(simple_seq2seq, self).__init__()
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        # self.embedding_layer.requires_grad_()
+        self.encoder = nn.LSTM(input_size=embed_size, hidden_size=hidden_size)
+        self.decoder = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size)
+        self.fc = nn.Linear(hidden_size, vocab_size)
+        self.vocab_size = vocab_size
+        self.device = device
+        self.hidden_size = hidden_size
+        self.dropout = nn.Dropout(0)
+
+    def forward_test(self, essay_input, topic):
+        batch_size = essay_input.shape[0]
+        max_essay_len = essay_input.shape[1]
+
+        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        # topic_embeddings = self.embedding_layer(topic.permute(1, 0))
+        topic_embeddings = self.embedding_layer(topic.permute(1, 0))
+        essay_input_embeddings = self.embedding_layer(essay_input.permute(1, 0))
+        # [seq_len, batch, embed_size]
+        outs, (h, c) = self.encoder.forward(topic_embeddings)
+
+        # h, c = torch.rand([1, batch_size, self.hidden_size], device=self.device), torch.rand([1, batch_size, self.hidden_size], device=self.device)
+        now_input = essay_input_embeddings[0, :].unsqueeze(0)
+
+        for now_step in range(1, max_essay_len):
+            now_input = self.dropout(now_input)
+            outs, (h, c) = self.decoder(now_input, (h, c))
+
+            temp = self.fc(outs.squeeze())
+
+            decoder_outputs[:, now_step - 1] = temp
+            now_input = decoder_outputs[:, now_step - 1].argmax(dim=-1).unsqueeze(0)
+            now_input = self.embedding_layer(now_input)
+
+        outs, (h, c) = self.decoder(now_input, (h, c))
+        decoder_outputs[:, -1] = self.fc(outs.squeeze())
+
+        return decoder_outputs
+
+    def forward_train(self, essay_input, topic):
+        # teacher_force_rate = torch.tensor(inputs[-1], dtype=torch.float, device=self.device)
+        batch_size = essay_input.shape[0]
+        max_essay_len = essay_input.shape[1]
+        # teacher_choice = torch.rand([max_essay_len], device=self.device)
+
+        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        # topic_embeddings = self.embedding_layer(topic.permute(1, 0))
+        topic_embeddings = self.embedding_layer(topic.permute(1, 0))
+        essay_input_embeddings = self.embedding_layer(essay_input).permute(1, 0, 2)
+        # [seq_len, batch, embed_size]
+        outs, (h, c) = self.encoder.forward(topic_embeddings)
+        # h, c = torch.rand([1, batch_size, self.hidden_size], device=self.device), torch.rand([1, batch_size, self.hidden_size], device=self.device)
+
+        now_input = essay_input_embeddings[0, :].unsqueeze(0)
+
+        for now_step in range(1, max_essay_len):
+            now_input = self.dropout(now_input)
+            outs, (h, c) = self.decoder(now_input, (h, c))
+            decoder_outputs[:, now_step - 1] = self.fc(outs.squeeze())
+            now_input = essay_input_embeddings[now_step, :].unsqueeze(0)
+
+        outs, (h, c) = self.decoder(now_input, (h, c))
+        decoder_outputs[:, -1] = self.fc(outs.squeeze())
+
+        return decoder_outputs
+
+    def forward(self, *inputs, teacher_force_ratio):
+        # topic, topic_len, essay_input, mems
+        essay_input = inputs[2]
+        topic = inputs[0]
+        if teacher_force_ratio < 0.01:
+            return self.forward_test(essay_input, topic)
+        else:
+            return self.forward_train(essay_input, topic)
+
 class Encoder(nn.Module):
     def __init__(self, embed_size, layer_num, hidden_size, is_bid):
         super(Encoder, self).__init__()
@@ -116,15 +194,15 @@ class Memory_neural(nn.Module):
         decoder_embeddings = decoder_embeddings.squeeze()
         batch_size = self.step_mem_embeddings.shape[0]
         seq_len = self.step_mem_embeddings.shape[1]
-        M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
+        M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
                    + self.V1(decoder_embeddings.reshape(batch_size, 1, self.embed_size))
         M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
 
-        gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size)).reshape(batch_size, seq_len, -1) \
+        gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
                    + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
         gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
 
-        self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings * (1 - gate)
+        self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings.detach() * (1 - gate)
         self.step_mem_embeddings = self.step_mem_embeddings
 
 
@@ -136,9 +214,9 @@ class Memory_neural(nn.Module):
 
         v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
         # v_t here is a column vector [batch, v_t] using torch.batch_multiplication
-        q_t = torch.softmax(self.step_mem_embeddings @ v_t.unsqueeze(2), dim=1)
+        q_t = torch.softmax(self.step_mem_embeddings.detach() @ v_t.unsqueeze(2), dim=1)
         # q_t here is a column vector [batch, q_t]
-        m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings
+        m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings.detach()
 
         return m_t
 
@@ -167,7 +245,7 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         if token.dim() == 1:
             token = token.unsqueeze(1)
         embeddings = self.embedding_layer.forward(token.permute(1, 0))
-        return self.dropout(embeddings)
+        return embeddings
 
     def before_feed_to_decoder(self, last_step_output_token_embeddings, last_step_decoder_lstm_hidden,
                                last_step_decoder_lstm_memory, topics_representations, mem_embeddings):
