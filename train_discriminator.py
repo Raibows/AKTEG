@@ -10,7 +10,7 @@ from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, \
     config_concepnet, config_train_public, config_wordcnn, config_train_discriminator
-from metric import TrainDiscriminatorMetric
+from metric import MetricDiscriminator
 
 
 tools_setup_seed(667)
@@ -69,7 +69,7 @@ def train_discriminator_process(writer, train_all_dataset, epoch, batch_size, ge
     label_dict = {l:i for i, l in enumerate(label_dict)}
     criterion = nn.BCEWithLogitsLoss().to(device)
     optimizer = optim.Adam(discriminator.parameters(), lr=ctd.learning_rate)
-    metric = TrainDiscriminatorMetric(label_dict['fake'])
+    metric = MetricDiscriminator(label_dict['fake'])
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
 
     @torch.no_grad()
