@@ -1,20 +1,28 @@
 import torch
 from tqdm import tqdm
 from torch import nn, optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import random
-from data import ZHIHU_dataset, InputLabel_dataset
-from neural import KnowledgeEnhancedSeq2Seq, CNNDiscriminator, init_param
+from data import ZHIHU_dataset
+from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
+from metric import MetricGenerator
+import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
+parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
+args = parser.parse_args()
+if not args.device.startwith('cuda:'):
+    args.device = config_train_public.device_name
 
 tools_setup_seed(667)
-device = torch.device(config_train_public.device_name)
+device = torch.device(args.device)
 # device = torch.device('cuda:0')
-tools_get_logger('train_G').info(f"using device {config_train_public.device_name}")
+tools_get_logger('train_G').info(f"using device {args.device}")
 
 
 def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force_ratio):
@@ -55,7 +63,8 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
     return loss_mean / len(dataset_loader)
 
 @torch.no_grad()
-def test_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, prediction_path=None):
+def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader,
+                   seq2seq, optimizer, criterion, prediction_path=None, dataset_type='test'):
     seq2seq.eval()
     loss_mean = 0.0
     teacher_force_ratio = 0.0
@@ -78,8 +87,8 @@ def test_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer,
                 sample = logits[random.randint(0, logits.shape[0]-1)]
                 idx = sample.argmax(dim=-1)
                 idx = idx.squeeze()[:10].tolist()
-                tools_get_logger('example').info(f"\n{train_all_dataset.convert_idx2topic(topic[0].tolist())}\n"
-                                                 f"{train_all_dataset.convert_idx2word(idx)}\n")
+                tools_get_logger('example').info(f"\n{test_all_dataset.convert_idx2topic(topic[0].tolist())}\n"
+                                                 f"{test_all_dataset.convert_idx2word(idx)}\n")
 
             if prediction_path:
                 predicts = logits.argmax(dim=-1)
@@ -88,7 +97,7 @@ def test_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer,
                 original_essays_set.extend(essay_target.tolist())
 
 
-            loss = criterion(logits.view(-1, len(train_all_dataset.word2idx)), essay_target.view(-1)).item()
+            loss = criterion(logits.view(-1, len(test_all_dataset.word2idx)), essay_target.view(-1)).item()
             loss_mean += loss
             pbar.set_postfix_str(f"loss: {loss:.4f}")
             pbar.update(1)
@@ -97,17 +106,19 @@ def test_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer,
         tools_make_dir(prediction_path)
         with open(prediction_path, 'w', encoding='utf-8') as file:
             for t, o, p in zip(topics_set, original_essays_set, predicts_set):
-                t = train_all_dataset.convert_idx2word(t, sep=' ')
-                o = train_all_dataset.convert_idx2word(o, sep='')
-                p = train_all_dataset.convert_idx2word(p, sep='')
+                t = test_all_dataset.convert_idx2word(t, sep=' ')
+                o = test_all_dataset.convert_idx2word(o, sep=' ')
+                p = test_all_dataset.convert_idx2word(p, sep=' ')
 
                 file.write(f'{t}\n{o}\n{p}\n')
-                file.write('--' * train_all_dataset.essay_padding_len)
+                file.write('--' * test_all_dataset.essay_padding_len)
                 file.write('\n')
 
         tools_get_logger('validation').info(f"predictions epoch{epoch} done! the res is in {prediction_path}")
 
-    return loss_mean / len(dataset_loader)
+    gram2, gram3, gram4, bleu2, bleu3, bleu4 = metric.value(predicts_set, test_all_dataset, dataset_type=dataset_type)
+
+    return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4
 
 def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir, k_fold):
     test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train_generator.batch_size,
@@ -116,7 +127,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
-
+    metric = MetricGenerator()
     optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
@@ -124,7 +135,8 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1)
 
 
-    best_save_loss = int(1e9)
+    best_save_metric = None
+    best_save_bleu4 = -1e9
     best_save_path = 'no_saved'
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     train_start_time = tools_get_time()
@@ -141,15 +153,15 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                            optimizer, criterion, begin_teacher_force_ratio)
             train_loss += train_loss_t
             if valid_dataloader:
-                valid_loss_t = test_generator(ep, train_all_dataset, valid_dataloader, seq2seq,
-                                              optimizer, criterion, prediction_path=None)
+                valid_loss_t, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, train_all_dataset, valid_dataloader, seq2seq,
+                                              optimizer, criterion, prediction_path=None, dataset_type='valid')
                 valid_loss += valid_loss_t
             tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        test_loss = test_generator(ep, train_all_dataset, test_all_dataloader, seq2seq,
-                                              optimizer, criterion, prediction_path=prediction_path)
+        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, metric, test_all_dataset, test_all_dataloader, seq2seq,
+                                              optimizer, criterion, prediction_path=prediction_path, dataset_type='test')
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
         # train_all_dataset.shuffle_memory()
@@ -166,20 +178,24 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         writer.add_scalar('Loss/test', test_loss, ep)
         with open(prediction_path, 'a', encoding='utf-8') as file:
             file.write(f'epoch {ep}\ntrain_loss{train_loss}\nvalid_loss{valid_loss}\ntest_loss{test_loss}')
+            file.write(f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
+                       f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}')
 
-        tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f} '
-                                       f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}')
+        tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f}\n'
+                                       f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}\n'
+                                       f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
+                                       f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}')
 
-        if config_train_generator.is_save_model and test_loss < best_save_loss:
-            save_path = config_seq2seq.model_save_fmt.format(train_start_time, ep, test_loss)
+        if config_train_generator.is_save_model and bleu4 < best_save_bleu4:
+            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, bleu4)
             best_save_path = save_path
-            if best_save_loss == int(1e9):
+            if best_save_metric == None:
                 tools_make_dir(save_path)
                 tools_copy_file('./config.py', save_path + '.config.py')
             torch.save(seq2seq.state_dict(), save_path)
-            best_save_loss = test_loss
+            best_save_metric = [test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
             tools_get_logger('train').info(
-                f"epoch {ep} saving model to {save_path}, now best_test_loss {best_save_loss:.4f}")
+                f"epoch {ep} saving model to {save_path}, now best_bleu4 {best_save_bleu4:.4f}")
         # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
 
     tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
@@ -204,14 +220,19 @@ if __name__ == '__main__':
                                      mem_corpus_path=config_concepnet.memory_corpus_path,
                                      prior=train_all_dataset.get_prior(), encode_to_tensor=True)
     test_all_dataset.print_info()
-    seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                       embed_size=config_seq2seq.embedding_size,
-                                       pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
-                                       encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-                                       encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-                                       lstm_layer=config_seq2seq.lstm_layer_num,
-                                       attention_size=config_seq2seq.attention_size,
-                                       device=device)
+    if args.model == 'knowledge':
+        seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+                                           embed_size=config_seq2seq.embedding_size,
+                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
+                                           encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
+                                           encoder_bid=config_seq2seq.encoder_lstm_is_bid,
+                                           lstm_layer=config_seq2seq.lstm_layer_num,
+                                           attention_size=config_seq2seq.attention_size,
+                                           device=device)
+    elif args.model == 'simple':
+        seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
+    else:
+        raise NotImplementedError(f'{args.model} not supported')
 
     init_param(seq2seq, init_way=config_train_generator.model_init_way)
 
@@ -220,7 +241,7 @@ if __name__ == '__main__':
     seq2seq.to(device)
     seq2seq.eval()
 
-    writer, log_dir = tools_get_tensorboard_writer(dir_pre='train_G')
+    writer, log_dir = tools_get_tensorboard_writer(dir_pre=f'pretrain_G_{args.model}')
 
     train_generator_process(epoch_num=config_train_generator.epoch,
                             batch_size=config_train_generator.batch_size,

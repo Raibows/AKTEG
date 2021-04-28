@@ -7,11 +7,7 @@ from tools import tools_get_logger, tools_setup_seed, tools_make_dir, tools_to_g
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_concepnet, config_train_public
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--model', help='model load path', default=config_seq2seq.model_load_path)
-parser.add_argument('--result', help='the result path', default=f'{tools_get_time()}.result')
-args = parser.parse_args()
-assert args.model and args.result
+
 
 
 @torch.no_grad()
@@ -32,25 +28,32 @@ def prediction(seq2seq, train_all_dataset, dataset_loader, device, res_path):
         topics_set.extend(topic.tolist())
         original_essays_set.extend(essay_target.tolist())
 
+    if res_path:
+        tools_make_dir(res_path)
+        with open(res_path, 'w', encoding='utf-8') as file:
+            for t, o, p in zip(topics_set, original_essays_set, predicts_set):
+                t = train_all_dataset.convert_idx2word(t, sep=' ')
+                o = train_all_dataset.convert_idx2word(o, sep=' ')
+                p = train_all_dataset.convert_idx2word(p, sep=' ')
 
-    tools_make_dir(res_path)
-    with open(res_path, 'w', encoding='utf-8') as file:
-        for t, o, p in zip(topics_set, original_essays_set, predicts_set):
-            t = train_all_dataset.convert_idx2word(t, sep=' ')
-            o = train_all_dataset.convert_idx2word(o, sep='')
-            p = train_all_dataset.convert_idx2word(p, sep='')
+                file.write(f'{t}\n{o}\n{p}\n')
+                file.write('--' * train_all_dataset.essay_padding_len)
+                file.write('\n')
+            file.write(f'the evaluate model is {args.model} on {config_zhihu_dataset.test_data_path} in {tools_get_time()}')
 
-            file.write(f'{t}\n{o}\n{p}\n')
-            file.write('--' * train_all_dataset.essay_padding_len)
-            file.write('\n')
-        file.write(f'the evaluate model is {args.model} on {config_zhihu_dataset.test_data_path} in {tools_get_time()}')
+    # tools_get_logger('predict').info(f'model {args.model} predicts '
+    #                                  f'{config_zhihu_dataset.test_data_path} results to {res_path}')
 
-    tools_get_logger('predict').info(f'model {args.model} predicts '
-                                     f'{config_zhihu_dataset.test_data_path} results to {res_path}')
+    return predicts_set
 
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', help='model load path', default=config_seq2seq.model_load_path)
+    parser.add_argument('--result', help='the result path', default=f'{tools_get_time()}.result')
+    args = parser.parse_args()
+    assert args.model and args.result
     tools_setup_seed(667)
     device = torch.device('cuda:3')
     tools_get_logger('predict').info('using cuda : 3')
