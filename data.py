@@ -18,16 +18,33 @@ def preprocess(sent):
             temp.append(x.strip())
     return temp
 
-def read_zhihu_dataset(path):
+def load_npy(data_config):
+    ret = []
+    # print(data_config)
+    for item in data_config:
+        print(item)
+        ret.append(np.load(item, allow_pickle=True))
+    return ret
+
+def read_zhihu_dataset(path, pre=True):
     essays = []
     topics = []
     with open(path, 'r', encoding='utf-8') as file:
-        for i, line in enumerate(file):
-            line = line.strip('\n').strip('\r').split('</d>')
-            # process the essay
-            essays.append(preprocess(line[0]))
-            # process the topics
-            topics.append(preprocess(line[1]))
+        if pre:
+            for i, line in enumerate(file):
+                line = line.strip('\n').strip('\r').split('</d>')
+                # process the essay
+                essays.append(preprocess(line[0]))
+                # process the topics
+                topics.append(preprocess(line[1]))
+        else:
+            for i, line in enumerate(file):
+                line = line.strip('\n').strip('\r').split('</d>')
+                # process the essay
+                essays.append(line[0].split(' '))
+                # process the topics
+                topics.append(line[1].split(' '))
+
     return essays, topics
 
 def read_coco_dataset(path):
@@ -41,12 +58,44 @@ def read_coco_dataset(path):
             topics.append(line)
     return essays, topics
 
+def read_acl_origin_data():
+    load_path = {
+        'train': './zhihu_dataset/acl_data/train.std.txt',
+        'test': './zhihu_dataset/acl_data/test.std.txt',
+        'valid': './zhihu_dataset/acl_data/valid.std.txt'
+    }
+    config = {
+        "word_dict": "./zhihu_dataset/acl_data/word_dict_zhihu.npy",
+        "pretrain_wv": "./zhihu_dataset/acl_data/wv_tencent.npy",
+        "topic_list": "./zhihu_dataset/acl_data/topic_list_100.pkl",
+        'train_mem': "./zhihu_dataset/acl_data/train_mem_idx_120_concept.npy",
+        'test_mem': "./zhihu_dataset/acl_data/tst.mem.idx.120.concept.npy",
+        'topic_list': './zhihu_dataset/acl_data/topic_list_100.pkl',
+    }
+    word2idx = np.load(config['word_dict'], allow_pickle=True).item()
+    special = config_zhihu_dataset.special_tokens
+    for key in special:
+        word2idx[key] = word2idx[key.upper()]
+        del word2idx[key.upper()]
+    idx2word = {v: k for k, v in word2idx.items()}
+    topic_list = tools_load_pickle_obj(config['topic_list'])
+    topic2idx = {k:word2idx[k] for k in topic_list}
+    idx2topic = {v:k for k, v in topic2idx.items()}
+    train_essay, train_topic = read_zhihu_dataset(load_path['train'], pre=False)
+    test_essay, test_topic = read_zhihu_dataset(load_path['test'], pre=False)
+    train_mem, test_mem = load_npy([config['train_mem'], config['test_mem']])
+
+    return word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (test_essay, test_topic, test_mem)
+
+
+
 class ZHIHU_dataset(Dataset):
     def __init__(self, path, topic_num_limit, topic_padding_num, vocab_size, essay_padding_len, prior,
                  special_tokens=config_zhihu_dataset.special_tokens,
                  mem_corpus_path=None, encode_to_tensor=True,
                  topic_mem_per_num=config_zhihu_dataset.topic_mem_per_num,
-                 topic_mem_num_all=config_zhihu_dataset.topic_mem_max_num):
+                 topic_mem_num_all=config_zhihu_dataset.topic_mem_max_num,
+                 acl_datas=None):
 
         self.path = path
         self.topic_num_limit = topic_num_limit
@@ -65,13 +114,18 @@ class ZHIHU_dataset(Dataset):
         self.weight_for_mem_choice = np.exp([i for i in range(self.topic_mem_num_all, 0, -1)])
         self.weight_for_mem_choice /= sum(self.weight_for_mem_choice)
 
-        if prior:
-            self.word2idx, self.idx2word, self.topic2idx, self.idx2topic, self.memory_corpus = \
-                prior['word2idx'], prior['idx2word'], prior['topic2idx'], prior['idx2topic'], prior['memory_corpus']
-            self.data_essays, self.data_topics, _, _, _, _ = self.__read_datas(special_tokens, has_prior=True)
+        if acl_datas:
+            self.word2idx, self.idx2word, self.topic2idx, self.idx2topic, \
+            (self.data_essays, self.data_topics, self.data_mems) = acl_datas
+            self.data_mems = torch.from_numpy(self.data_mems)
         else:
-            self.data_essays, self.data_topics, self.word2idx, self.idx2word, self.topic2idx, self.idx2topic = \
-                self.__read_datas(special_tokens)
+            if prior:
+                self.word2idx, self.idx2word, self.topic2idx, self.idx2topic, self.memory_corpus = \
+                    prior['word2idx'], prior['idx2word'], prior['topic2idx'], prior['idx2topic'], prior['memory_corpus']
+                self.data_essays, self.data_topics, _, _, _, _ = self.__read_datas(special_tokens, has_prior=True)
+            else:
+                self.data_essays, self.data_topics, self.word2idx, self.idx2word, self.topic2idx, self.idx2topic = \
+                    self.__read_datas(special_tokens)
 
         if encode_to_tensor:
             self.__encode_datas()
@@ -120,7 +174,7 @@ class ZHIHU_dataset(Dataset):
                 for mem in self.memory_corpus[t]:
                     if mem not in word_cnts:
                         word_cnts[mem] = 1
-                    word_cnts[mem] *= (3 * topics_cnts[t]) # not inf but high weighted
+                    word_cnts[mem] *= (1.5 * topics_cnts[t]) # not inf but high weighted
 
         word2idx = {}
         if len(word_cnts) > self.vocab_size_limit:
@@ -186,8 +240,16 @@ class ZHIHU_dataset(Dataset):
             essays['input'].append(ei)
             essays['target'].append(et)
         self.data_essays = essays
-        if self.memory_corpus:
+        if self.memory_corpus and len(self.memory_corpus) > 0:
             self.data_mems = self.shuffle_memory()
+        # limit = 1000
+        # self.data_topics = self.data_topics[:limit]
+        # self.len_topics = self.len_topics[:limit]
+        # self.data_mems = self.data_mems[:limit]
+        # self.data_essays['input'] = self.data_essays['input'][:limit]
+        # self.data_essays['target'] = self.data_essays['target'][:limit]
+        # self.len_essays = self.len_essays[:limit]
+
 
     def convert_idx2word(self, idxs, sep=False, end_token=None):
         temp = []
@@ -336,17 +398,17 @@ class InputLabel_dataset(Dataset):
 
 if __name__ == '__main__':
     pass
-
-
-
-    raw_dataset = ZHIHU_dataset(path=config_zhihu_dataset.coco_train_path,
-                                topic_num_limit=config_zhihu_dataset.topic_num_limit,
-                                topic_padding_num=config_zhihu_dataset.topic_padding_num,
-                                vocab_size=config_zhihu_dataset.vocab_size,
-                                essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                prior=None, encode_to_tensor=False)
-
-    raw_dataset.print_info()
+    word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (test_essay, test_topic, test_mem) \
+    = read_acl_origin_data()
+    train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                      topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                      topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                      vocab_size=config_zhihu_dataset.vocab_size,
+                                      essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                      prior=None, encode_to_tensor=True,
+                                      mem_corpus_path=config_concepnet.memory_corpus_path,
+                                      acl_datas=(word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem)))
+    train_all_dataset.print_info()
 
 
     pass

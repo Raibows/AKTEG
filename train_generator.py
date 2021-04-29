@@ -3,7 +3,7 @@ from tqdm import tqdm
 from torch import nn, optim
 from torch.utils.data import DataLoader
 import random
-from data import ZHIHU_dataset
+from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words
@@ -15,6 +15,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
+parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
 args = parser.parse_args()
 if not args.device.startswith('cuda:'):
     args.device = config_train_public.device_name
@@ -22,7 +23,7 @@ if not args.device.startswith('cuda:'):
 tools_setup_seed(667)
 device = torch.device(args.device)
 # device = torch.device('cuda:0')
-tools_get_logger('train_G').info(f"using device {args.device}")
+tools_get_logger('train_G').info(f"using device {args.device} training on {args.dataset}")
 
 
 def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force_ratio):
@@ -128,15 +129,15 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
     metric = MetricGenerator()
-    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
-    warmup_epoch = 3
-    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1)
+    warmup_epoch = -1
+    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
 
 
     best_save_metric = None
-    best_save_bleu4 = -1e9
+    best_save_bleu2 = -1e9
     best_save_path = 'no_saved'
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     train_start_time = tools_get_time()
@@ -145,9 +146,9 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         train_loss = 0.0
         valid_loss = 0.0
         valid_loss_t = 0.0
-        if ep >= 9:
-            begin_teacher_force_ratio *= 0.99
-            begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
+        # if ep >= 9:
+        #     begin_teacher_force_ratio *= 0.99
+        #     begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
         for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):
             train_loss_t = train_generator(ep, train_all_dataset, train_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
@@ -186,17 +187,17 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                        f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
                                        f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}')
 
-        if config_train_generator.is_save_model and bleu4 > best_save_bleu4:
-            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, bleu4)
+        if config_train_generator.is_save_model and gram2 > best_save_bleu2:
+            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2)
             best_save_path = save_path
             if best_save_metric == None:
                 tools_make_dir(save_path)
                 tools_copy_file('./config.py', save_path + '.config.py')
             torch.save(seq2seq.state_dict(), save_path)
             best_save_metric = [test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
-            best_save_bleu4 = bleu4
+            best_save_bleu2 = gram2
             tools_get_logger('train').info(
-                f"epoch {ep} saving model to {save_path}, now best_bleu4 {best_save_bleu4:.4f}")
+                f"epoch {ep} saving model to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")
         # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
 
     tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
@@ -205,26 +206,54 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
 
 if __name__ == '__main__':
-    train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
-                                      topic_num_limit=config_zhihu_dataset.topic_num_limit,
-                                      topic_padding_num=config_zhihu_dataset.topic_padding_num,
-                                      vocab_size=config_zhihu_dataset.vocab_size,
-                                      essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                      prior=None, encode_to_tensor=True,
-                                      mem_corpus_path=config_concepnet.memory_corpus_path)
-    train_all_dataset.print_info()
-    test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
-                                     topic_num_limit=config_zhihu_dataset.topic_num_limit,
-                                     topic_padding_num=config_zhihu_dataset.topic_padding_num,
-                                     vocab_size=config_zhihu_dataset.vocab_size,
-                                     essay_padding_len=config_zhihu_dataset.essay_padding_len,
-                                     mem_corpus_path=config_concepnet.memory_corpus_path,
-                                     prior=train_all_dataset.get_prior(), encode_to_tensor=True)
-    test_all_dataset.print_info()
+    if args.dataset == 'origin':
+        train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                          topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                          topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                          vocab_size=config_zhihu_dataset.vocab_size,
+                                          essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                          prior=None, encode_to_tensor=True,
+                                          mem_corpus_path=config_concepnet.memory_corpus_path)
+        train_all_dataset.print_info()
+        test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
+                                         topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                         topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                         vocab_size=config_zhihu_dataset.vocab_size,
+                                         essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                         mem_corpus_path=config_concepnet.memory_corpus_path,
+                                         prior=train_all_dataset.get_prior(), encode_to_tensor=True)
+        test_all_dataset.print_info()
+    elif args.dataset == 'acl':
+        word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (
+        test_essay, test_topic, test_mem) \
+            = read_acl_origin_data()
+        train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                          topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                          topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                          vocab_size=config_zhihu_dataset.vocab_size,
+                                          essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                          prior=None, encode_to_tensor=True,
+                                          mem_corpus_path=config_concepnet.memory_corpus_path,
+                                          acl_datas=(word2idx, idx2word, topic2idx, idx2topic,
+                                                     (train_essay, train_topic, train_mem)))
+        train_all_dataset.print_info()
+        test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
+                                          topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                          topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                          vocab_size=config_zhihu_dataset.vocab_size,
+                                          essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                          prior=None, encode_to_tensor=True,
+                                          mem_corpus_path=config_concepnet.memory_corpus_path,
+                                          acl_datas=(word2idx, idx2word, topic2idx, idx2topic,
+                                                     (test_essay, test_topic, test_mem)))
+        test_all_dataset.print_info()
+    else:
+        raise NotImplementedError(f'{args.dataset} not supported')
+
     if args.model == 'knowledge':
         seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
                                            embed_size=config_seq2seq.embedding_size,
-                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
+                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
                                            encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
                                            encoder_bid=config_seq2seq.encoder_lstm_is_bid,
                                            lstm_layer=config_seq2seq.lstm_layer_num,
