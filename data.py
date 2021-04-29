@@ -253,6 +253,8 @@ class ZHIHU_dataset(Dataset):
 
     def convert_idx2word(self, idxs, sep=False, end_token=None):
         temp = []
+        if isinstance(end_token, str):
+            end_token = self.word2idx[end_token]
         for i in idxs:
             if i == end_token: break
             temp.append(self.idx2word[i])
@@ -261,6 +263,7 @@ class ZHIHU_dataset(Dataset):
         return temp
 
     def unpadded_idxs(self, idxs, end_token='<eos>'):
+        end_token = self.word2idx[end_token]
         temp = []
         for i in idxs:
             if i == end_token: break
