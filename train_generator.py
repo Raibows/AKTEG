@@ -6,11 +6,12 @@ import random
 from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words
+    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
@@ -107,12 +108,12 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
         tools_make_dir(prediction_path)
         with open(prediction_path, 'w', encoding='utf-8') as file:
             for t, o, p in zip(topics_set, original_essays_set, predicts_set):
-                t = test_all_dataset.convert_idx2word(t, sep=' ')
-                o = test_all_dataset.convert_idx2word(o, sep=' ')
-                p = test_all_dataset.convert_idx2word(p, sep=' ')
+                t = test_all_dataset.convert_idx2word(t, sep=' ', end_token='<eos>')
+                o = test_all_dataset.convert_idx2word(o, sep=' ', end_token='<eos>')
+                p = test_all_dataset.convert_idx2word(p, sep=' ', end_token='<eos>')
 
                 file.write(f'{t}\n{o}\n{p}\n')
-                file.write('--' * test_all_dataset.essay_padding_len)
+                file.write('-*-' * int(test_all_dataset.essay_padding_len / 3.2))
                 file.write('\n')
 
         tools_get_logger('validation').info(f"predictions epoch{epoch} done! the res is in {prediction_path}")
@@ -136,7 +137,6 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
 
 
-    best_save_metric = None
     best_save_bleu2 = -1e9
     best_save_path = 'no_saved'
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
@@ -157,19 +157,20 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                 valid_loss_t, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, train_all_dataset, valid_dataloader, seq2seq,
                                               optimizer, criterion, prediction_path=None, dataset_type='valid')
                 valid_loss += valid_loss_t
-            tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
+                tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
                                            f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
+
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
         test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, metric, test_all_dataset, test_all_dataloader, seq2seq,
                                               optimizer, criterion, prediction_path=prediction_path, dataset_type='test')
+
         train_loss /= len(kfolds)
         valid_loss /= len(kfolds)
         # train_all_dataset.shuffle_memory()
 
-        # because we don't care the mle_loss on test_dataset
         if ep > warmup_epoch:
-            scheduler.step(train_loss)
+            scheduler.step(gram2)
         else:
             warmup_scheduler.step()
 
@@ -177,6 +178,8 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
             writer.add_scalar('Loss/valid', valid_loss, ep)
         writer.add_scalar('Loss/train', train_loss, ep)
         writer.add_scalar('Loss/test', test_loss, ep)
+        writer.add_scalar('Bleu/gram2', gram2, ep)
+        writer.add_scalar('Bleu/mixgram4', bleu4, ep)
         with open(prediction_path, 'a', encoding='utf-8') as file:
             file.write(f'epoch {ep}\ntrain_loss{train_loss}\nvalid_loss{valid_loss}\ntest_loss{test_loss}')
             file.write(f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
@@ -185,16 +188,19 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f}\n'
                                        f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}\n'
                                        f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
-                                       f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}')
+                                       f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}\n'
+                                       f'now best_gram2 {best_save_bleu2}')
+        evaluate_summary = [ep, train_loss, valid_loss, test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
+        tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
+
 
         if config_train_generator.is_save_model and gram2 > best_save_bleu2:
             save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2)
+            tools_make_dir(save_path)
             best_save_path = save_path
-            if best_save_metric == None:
-                tools_make_dir(save_path)
+            if not os.path.exists(save_path + '.config.py'):
                 tools_copy_file('./config.py', save_path + '.config.py')
             torch.save(seq2seq.state_dict(), save_path)
-            best_save_metric = [test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
             best_save_bleu2 = gram2
             tools_get_logger('train').info(
                 f"epoch {ep} saving model to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")

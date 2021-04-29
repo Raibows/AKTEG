@@ -80,4 +80,9 @@ def tools_batch_idx2words(idxs, idx2word:dict):
         temp = ' '.join([idx2word[i] for i in idxs])
     return temp
 
+def tools_write_log_to_file(fmt, value, path):
+    tools_make_dir(path)
+    with open(path, 'a', encoding='utf-8') as file:
+        file.write(fmt.format(*value))
+        file.write('\n')
 

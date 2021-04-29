@@ -46,7 +46,7 @@ class simple_seq2seq(nn.Module):
         self.vocab_size = vocab_size
         self.device = device
         self.hidden_size = hidden_size
-        self.dropout = nn.Dropout(0)
+        self.dropout = nn.Dropout()
 
     def forward_test(self, essay_input, topic):
         batch_size = essay_input.shape[0]
@@ -136,7 +136,7 @@ class Encoder(nn.Module):
         # outs, (h, c) = self.lstm(inputs[0])
         outs, (h, c) = self.lstm.forward(sent_packed)
 
-        outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=1e-9)
+        outs, _ = nn.utils.rnn.pad_packed_sequence(outs, padding_value=1e-31)
         #
         outs = outs.index_select(1, idx_reverse)
         h = h.index_select(1, idx_reverse)
@@ -165,11 +165,10 @@ class Decoder(nn.Module):
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
-        outs = self.dropout(outs)
 
         logits = self.fc(outs.squeeze(0))
 
-        return logits, (h, c)
+        return self.dropout(logits), (h, c)
 
 class Memory_neural(nn.Module):
     def __init__(self, embed_size, decoder_hidden_size):
@@ -178,10 +177,10 @@ class Memory_neural(nn.Module):
         # using gate mechanism is for step-by-step update
         # still needs grad descent
         self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
-        self.U1 = nn.Linear(embed_size, embed_size, bias=True)
-        self.V1 = nn.Linear(embed_size, embed_size, bias=True)
-        self.U2 = nn.Linear(embed_size, embed_size, bias=True)
-        self.V2 = nn.Linear(embed_size, embed_size, bias=True)
+        self.U1 = nn.Linear(embed_size, embed_size, bias=False)
+        self.V1 = nn.Linear(embed_size, embed_size, bias=False)
+        self.U2 = nn.Linear(embed_size, embed_size, bias=False)
+        self.V2 = nn.Linear(embed_size, embed_size, bias=False)
         self.step_mem_embeddings = None
         self.embed_size = embed_size
 
@@ -189,31 +188,45 @@ class Memory_neural(nn.Module):
         """
         note decoder_embeddings is t_step but not (t-1) last step
         step_mem_embeddings [batch, seq_len, embed_size]
-        decoder_embeddings [batch, 1, embed_size]
+        decoder_embeddings [batch, 1, embed_size] (convert to)
         """
-        decoder_embeddings = decoder_embeddings.squeeze()
-        batch_size = self.step_mem_embeddings.shape[0]
-        seq_len = self.step_mem_embeddings.shape[1]
-        M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
-                   + self.V1(decoder_embeddings.reshape(batch_size, 1, self.embed_size))
+        if decoder_embeddings.dim() == 2:
+            decoder_embeddings = decoder_embeddings.unsqueeze(1)
+        else:
+            decoder_embeddings = decoder_embeddings.permute(1, 0, 2) # [batch, 1, embed_size]
+        # batch_size = self.step_mem_embeddings.shape[0]
+        # seq_len = self.step_mem_embeddings.shape[1]
+
+        M_t_temp = self.U1.forward(self.step_mem_embeddings.detach()) + self.V1.forward(decoder_embeddings) # broadcast add
         M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
 
-        gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
-                   + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
+        gate = self.U2.forward(self.step_mem_embeddings.detach()) + self.V2.forward(decoder_embeddings) # broadcast add
         gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
 
-        self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings.detach() * (1 - gate)
+        self.step_mem_embeddings = gate * M_t_temp + (1.0 - gate) * self.step_mem_embeddings.detach()
         self.step_mem_embeddings[self.step_mem_embeddings.isinf()] = 1e-31
         self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
+
+        # M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
+        #            + self.V1(decoder_embeddings.reshape(batch_size, 1, self.embed_size))
+        # M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
+
+        # gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
+        #            + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
+        # gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
+        #
+        # self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings.detach() * (1 - gate)
+        # self.step_mem_embeddings[self.step_mem_embeddings.isinf()] = 1e-31
+        # self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
 
     def forward(self, decoder_hidden_s_t_1):
         # self.step_mem_embeddings
         # reshape embeddings to [batch, len, embed_size]
 
 
-        v_t = torch.tanh(self.W(decoder_hidden_s_t_1))
+        v_t = torch.tanh(self.W(decoder_hidden_s_t_1)).unsqueeze(2)
         # v_t here is a column vector [batch, v_t] using torch.batch_multiplication
-        q_t = torch.softmax(self.step_mem_embeddings.detach() @ v_t.unsqueeze(2), dim=1)
+        q_t = torch.softmax(self.step_mem_embeddings.detach() @ v_t, dim=1)
         # q_t here is a column vector [batch, q_t]
         m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings.detach()
 
@@ -238,7 +251,7 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
 
     def forward_only_embedding_layer(self, token):
         """
-        expect [batch, essay_idx1] or [batch]
+        expect [batch, essay_idx_1] or [batch]
         return [seqlen, batch, embed_size]
         """
         if token.dim() == 1:
@@ -254,15 +267,12 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         e_y_t_1 = last_step_output_token_embeddings
 
         # calculate c_{t}
-        batch_size = topics_representations.shape[1]
-        topic_num = topics_representations.shape[0]
-        pre_t_matrix = self.W_1.forward(topics_representations.reshape(batch_size * topic_num, -1))
-        pre_t_matrix = pre_t_matrix.reshape(batch_size, topic_num, -1)
+        pre_t_matrix = self.W_1.forward(topics_representations) # [batch, topic_num, temp]
         query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(1)
         # query_t [batch, 1, temp] for using add broadcast
-        e_t_i = self.W_3.forward(torch.tanh(pre_t_matrix + query_t).reshape(batch_size * topic_num, -1)).reshape(batch_size, topic_num)
-        alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num]
-        c_t = topics_representations.reshape(batch_size, -1, topic_num) @ alpha_t_i.unsqueeze(2)
+        e_t_i = self.W_3.forward(torch.tanh(pre_t_matrix + query_t)) #[batch, topic_num, 1]
+        alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num, 1]
+        c_t = topics_representations.permute(0, 2, 1) @ alpha_t_i
 
         # calculate m_{t}
         m_t = self.memory_neural.forward(last_step_decoder_lstm_hidden)
@@ -290,7 +300,8 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
 
         topic_embeddings = self.forward_only_embedding_layer(topic)
         topics_representations, (h, c) = self.encoder.forward(topic_embeddings, topic_len)
-        # [topic_pad_num, batch, output_size]
+        topics_representations = topics_representations.permute(1, 0, 2)
+        # [batch, topic_pad_num, output_size]
 
         mem_embeddings = self.forward_only_embedding_layer(mems)
         # [mem_max_num, batch, embed_size]
