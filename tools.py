@@ -85,4 +85,6 @@ def tools_write_log_to_file(fmt, value, path):
     with open(path, 'a', encoding='utf-8') as file:
         file.write(fmt.format(*value))
         file.write('\n')
+        file.write('-*-'*25)
+        file.write('\n')
 

@@ -140,9 +140,12 @@ class Encoder(nn.Module):
         #
         outs = outs.index_select(1, idx_reverse)
         h = h.index_select(1, idx_reverse)
-        h = h.reshape(self.layer_num, h.size(1), -1)
+        h = h.view(self.layer_num, self.direction, h.size(1), -1) #[layer, direction, batch, -1]
         c = c.index_select(1, idx_reverse)
-        c = c.reshape(self.layer_num, c.size(1), -1)
+        c = c.view(self.layer_num, self.direction, c.size(1), -1)
+
+        h = torch.cat([h[:, 0, :, :], h[:, 1, :, :]], dim=-1)
+        c = torch.cat([c[:, 0, :, :], c[:, 1, :, :]], dim=-1)
 
         # select the real final state
         # outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
@@ -207,17 +210,6 @@ class Memory_neural(nn.Module):
         self.step_mem_embeddings[self.step_mem_embeddings.isinf()] = 1e-31
         self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
 
-        # M_t_temp = self.U1(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
-        #            + self.V1(decoder_embeddings.reshape(batch_size, 1, self.embed_size))
-        # M_t_temp = torch.tanh(M_t_temp) # [batch, seq_len, embed_size]
-
-        # gate = self.U2(self.step_mem_embeddings.reshape(-1, self.embed_size).detach()).reshape(batch_size, seq_len, -1) \
-        #            + self.V2(decoder_embeddings).reshape(batch_size, 1, self.embed_size)
-        # gate = torch.sigmoid(gate) # [batch, seq_len, embed_size]
-        #
-        # self.step_mem_embeddings = M_t_temp * gate + self.step_mem_embeddings.detach() * (1 - gate)
-        # self.step_mem_embeddings[self.step_mem_embeddings.isinf()] = 1e-31
-        # self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
 
     def forward(self, decoder_hidden_s_t_1):
         # self.step_mem_embeddings
@@ -333,6 +325,14 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         # [batch, essay_len, essay_vocab_size]
         return decoder_outputs
 
+
+
+
+
+
+
+
+
 def init_param(self, init_way=None):
     if init_way == 'uniform':
         for param in self.parameters():
@@ -362,28 +362,30 @@ def init_param(self, init_way=None):
 
 if __name__ == '__main__':
 
+    def get_mask_matrix(idx, mask_idx):
+        batch, maxlen = idx.shape
+        mask = (idx != mask_idx).unsqueeze(1).expand(batch, maxlen, maxlen)
+        mask = mask & mask.permute(0, 2, 1)
+
+        return mask
+
+
     pass
-
+    batch = 64
+    maxlen = 80
+    dim = 100
     # print(outs.argmax(dim=2))
-
-    x = torch.randint(0, 100, [4, 10])
-    model = CNNDiscriminator(label_num=3,
-                             vocab_size=100,
-                             embed_size=64,
-                             channel_nums=[50, 60, 70, 80, 90, 100, 128, 256, 128],
-                             kernel_sizes=[1, 2, 3, 4, 5, 6, 7, 8, 9])
-    logits = model.forward(x)
-    criterion = nn.BCEWithLogitsLoss()
-    target = torch.rand([4, 3])
-    # print(logits)
-    # print(target)
-
-    loss = criterion(logits, target)
-    loss.backward()
-
-
-
-    print(loss)
+    idx = torch.randint(0, 100, [batch, maxlen])
+    idxlen = torch.randint(1, maxlen, [batch])
+    for i in range(batch):
+        idx[i][idxlen[i]:] = 0
+    print(idx)
+    mask = get_mask_matrix(idx, 0)
+    query = torch.rand([batch, maxlen, dim])
+    key = torch.rand([batch, maxlen, dim])
+    value = torch.rand([batch, maxlen, dim])
+    model = MultiheadAttention(dim, 300, 6, dropout=0.5)
+    res = model.forward(query, key, value, mask=mask.unsqueeze(1))
 
 
 

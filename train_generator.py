@@ -138,7 +138,8 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
 
     best_save_bleu2 = -1e9
-    best_save_path = 'no_saved'
+    best_save_mixbleu4 = -1e9
+    best_save_path = None
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     train_start_time = tools_get_time()
     kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
@@ -181,29 +182,31 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         writer.add_scalar('Bleu/gram2', gram2, ep)
         writer.add_scalar('Bleu/mixgram4', bleu4, ep)
         with open(prediction_path, 'a', encoding='utf-8') as file:
-            file.write(f'epoch {ep}\ntrain_loss{train_loss}\nvalid_loss{valid_loss}\ntest_loss{test_loss}')
+            file.write(f'epoch {ep}\ntrain_loss{train_loss:.4f}\nvalid_loss{valid_loss:.4f}\ntest_loss{test_loss:.4f}')
             file.write(f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
                        f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}')
 
-        tools_get_logger('train').info(f'epoch {ep} done train_loss {train_loss:.4f}\n'
-                                       f'valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}\n'
+        tools_get_logger('train').info(f'epoch {ep} done\n'
+                                       f'train_loss {train_loss:.4f} valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}\n'
                                        f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
                                        f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}\n'
-                                       f'now best_gram2 {best_save_bleu2}')
+                                       f'now best_gram2 {best_save_bleu2:.5f}')
         evaluate_summary = [ep, train_loss, valid_loss, test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
-        if config_train_generator.is_save_model and gram2 > best_save_bleu2:
-            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2)
+        if config_train_generator.is_save_model and (gram2 > best_save_bleu2 or True):
+            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2, bleu4)
             tools_make_dir(save_path)
-            best_save_path = save_path
-            if not os.path.exists(save_path + '.config.py'):
+            if best_save_path == None:
                 tools_copy_file('./config.py', save_path + '.config.py')
+            if gram2 > best_save_bleu2 and bleu4 > best_save_mixbleu4:
+                best_save_path = save_path
+                best_save_bleu2 = gram2
+                best_save_mixbleu4 = bleu4
             torch.save(seq2seq.state_dict(), save_path)
-            best_save_bleu2 = gram2
             tools_get_logger('train').info(
-                f"epoch {ep} saving model to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")
+                f"epoch {ep} saving model bleu2 {gram2:.4f} to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")
         # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
 
     tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
