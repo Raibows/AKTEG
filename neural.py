@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from tools import tools_load_pickle_obj, tools_get_logger
+from transformer import MultiheadAttention
 
 class CNNDiscriminator(nn.Module):
     def __init__(self, label_num, vocab_size, embed_size, channel_nums:list,
@@ -152,13 +153,17 @@ class Encoder(nn.Module):
 
         return outs, (h, c)
 
+
 class Decoder(nn.Module):
     def __init__(self, vocab_size, embed_size, layer_num, encoder_output_size):
         super(Decoder, self).__init__()
         self.input_size = embed_size + encoder_output_size + embed_size # decoder_embed + encoder_out + memory_embed
+        temp = self.input_size // 2
+        self.sharp_linear = nn.Linear(self.input_size, temp)
         self.layer_num = layer_num
         self.embed_size = embed_size
         self.hidden_size = encoder_output_size
+        self.input_size = temp
         self.lstm = nn.LSTM(self.input_size, encoder_output_size, layer_num,
                             bidirectional=False, dropout=0.5 if layer_num > 1 else 0.0)
         self.fc = nn.Linear(encoder_output_size, vocab_size)
@@ -167,6 +172,7 @@ class Decoder(nn.Module):
 
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
+        input_to_lstm = self.sharp_linear.forward(input_to_lstm)
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
 
         logits = self.fc(outs.squeeze(0))
@@ -235,7 +241,6 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
         self.W_1 = nn.Linear(self.encoder.output_size, attention_size, bias=False)
         self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
-        self.W_3 = nn.Linear(attention_size, 1, bias=False)
         self.vocab_size = vocab_size
         self.device = device
         self.dropout = nn.Dropout(0.5)
@@ -260,9 +265,9 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
 
         # calculate c_{t}
         pre_t_matrix = self.W_1.forward(topics_representations) # [batch, topic_num, temp]
-        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(1)
+        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2)
         # query_t [batch, 1, temp] for using add broadcast
-        e_t_i = self.W_3.forward(torch.tanh(pre_t_matrix + query_t)) #[batch, topic_num, 1]
+        e_t_i = pre_t_matrix @ query_t #[batch, topic_num, 1]
         alpha_t_i = torch.softmax(e_t_i, dim=1) # [batch, topic_num, 1]
         c_t = topics_representations.permute(0, 2, 1) @ alpha_t_i
 
@@ -325,7 +330,137 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         # [batch, essay_len, essay_vocab_size]
         return decoder_outputs
 
+class AttentionBasedEncoder(nn.Module):
+    def __init__(self, embed_size, input_dim, output_dim, nheads, device):
+        super(AttentionBasedEncoder, self).__init__()
+        self.attention_layer = MultiheadAttention(input_dim, output_dim, nheads, 0.5, device)
+        self.W_q = nn.Linear(embed_size, input_dim)
+        self.W_k = nn.Linear(embed_size, input_dim)
+        self.W_v = nn.Linear(embed_size, input_dim)
+        self.W_h = nn.Linear(output_dim, output_dim)
+        self.W_c = nn.Linear(output_dim, output_dim, bias=False)
+        self.output_size = output_dim
 
+
+    def forward(self, topic_embeddings, mask):
+        # [batch, seqlen, embed_size]
+        query = self.W_q(topic_embeddings)
+        key = self.W_k(topic_embeddings)
+        value = self.W_v(topic_embeddings)
+        outs = self.attention_layer.forward(query, key, value, mask)
+        state = torch.sum(outs, dim=1) #[batch, output_dim]
+        state = torch.tanh(state).unsqueeze(0)
+        h, c = self.W_h(state), self.W_c(state)
+
+        return outs, (h, c)
+
+class KnowledgeEnhancedAttentionSeq2Seq(nn.Module):
+    def __init__(self, vocab_size, embed_size, pretrained_wv_path, encoder_input_dim, encoder_output_dim, encoder_nheads,
+                 lstm_layer, attention_size, device, mask_idx):
+        super(KnowledgeEnhancedAttentionSeq2Seq, self).__init__()
+        self.pretrained_wv_path = pretrained_wv_path
+        self.encoder = AttentionBasedEncoder(embed_size, encoder_input_dim, encoder_output_dim, encoder_nheads, device)
+        self.decoder = Decoder(vocab_size, embed_size, lstm_layer, self.encoder.output_size)
+        self.memory_neural = Memory_neural(embed_size, self.decoder.hidden_size)
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        self.W_1 = nn.Linear(self.encoder.output_size, attention_size, bias=False)
+        self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
+        self.mask_idx = torch.tensor(mask_idx, dtype=torch.int64, device=device)
+        self.vocab_size = vocab_size
+        self.device = device
+        self.dropout = nn.Dropout(0.5)
+
+    def get_mask_matrix(self, idx):
+        batch, maxlen = idx.shape
+        mask = (idx != self.mask_idx).unsqueeze(1).expand(batch, maxlen, maxlen)
+        mask = mask & mask.permute(0, 2, 1)
+
+        return mask.unsqueeze(1)
+
+    def forward_only_embedding_layer(self, token):
+        """
+        expect [batch, essay_idx_1] or [batch]
+        return [seqlen, batch, embed_size]
+        """
+        if token.dim() == 1:
+            token = token.unsqueeze(1)
+        embeddings = self.embedding_layer.forward(token.permute(1, 0))
+        return embeddings
+
+    def before_feed_to_decoder(self, last_step_output_token_embeddings, last_step_decoder_lstm_hidden,
+                               last_step_decoder_lstm_memory, topics_representations):
+        # mems [batch, mem_idx_per_sample]
+
+        # calculate e_(y_{t-1})
+        e_y_t_1 = last_step_output_token_embeddings
+
+        # calculate c_{t}
+        pre_t_matrix = self.W_1.forward(topics_representations)  # [batch, topic_num, temp]
+        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2)
+        # query_t [batch, 1, temp] for using add broadcast
+        e_t_i = pre_t_matrix @ query_t  # [batch, topic_num, 1]
+        alpha_t_i = torch.softmax(e_t_i, dim=1)  # [batch, topic_num, 1]
+        c_t = topics_representations.permute(0, 2, 1) @ alpha_t_i
+
+        # calculate m_{t}
+        m_t = self.memory_neural.forward(last_step_decoder_lstm_hidden)
+
+        return torch.cat([e_y_t_1.squeeze(), c_t.squeeze(), m_t.squeeze()], dim=1)
+
+    def clear_memory_neural_step_state(self):
+        self.memory_neural.step_mem_embeddings = None
+
+    def init_memory_neural_step_state(self, begin_embeddings):
+        self.memory_neural.step_mem_embeddings = begin_embeddings.permute(1, 0, 2)
+        # step_mem_embeddings
+        # reshape embeddings to [batch, len, embed_size]
+
+    def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
+
+        # topic_input [topic, topic_len]
+        # topic [batch_size, seq_len]
+        batch_size = topic.shape[0]
+        max_essay_len = essay_input.shape[1]
+        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
+        teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
+
+        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+
+        topic_embeddings = self.forward_only_embedding_layer(topic).permute(1, 0, 2)
+        mask = self.get_mask_matrix(topic)
+
+        topics_representations, (h, c) = self.encoder.forward(topic_embeddings, mask)
+        # [batch, topic_pad_num, output_size]
+
+        mem_embeddings = self.forward_only_embedding_layer(mems)
+        # [mem_max_num, batch, embed_size]
+        self.init_memory_neural_step_state(mem_embeddings)
+
+        # first input token is <go>
+        # if lstm layer > 1, then select the topmost layer lstm memory c[-1] and hidden h[-1]
+        now_input = essay_input[:, 0]
+        now_input_embeddings = self.forward_only_embedding_layer(now_input)
+        self.memory_neural.update_memory(now_input_embeddings)
+        now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
+                                                        topics_representations)
+
+        for now_step in range(1, max_essay_len):
+            logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
+            decoder_outputs[:, now_step - 1] = logits
+            if teacher_mode_chocie[now_step] < teacher_force_ratio:
+                now_input = essay_input[:, now_step]
+            else:
+                now_input = logits.argmax(dim=-1)
+            now_input_embeddings = self.forward_only_embedding_layer(now_input)
+            self.memory_neural.update_memory(now_input_embeddings)
+            now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
+                                                            topics_representations)
+
+        logits, _ = self.decoder.forward(now_decoder_input, h, c)
+        decoder_outputs[:, -1] = logits
+        self.clear_memory_neural_step_state()
+        # [batch, essay_len, essay_vocab_size]
+        return decoder_outputs
 
 
 
@@ -361,13 +496,6 @@ def init_param(self, init_way=None):
 
 
 if __name__ == '__main__':
-
-    def get_mask_matrix(idx, mask_idx):
-        batch, maxlen = idx.shape
-        mask = (idx != mask_idx).unsqueeze(1).expand(batch, maxlen, maxlen)
-        mask = mask & mask.permute(0, 2, 1)
-
-        return mask
 
 
     pass

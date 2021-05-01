@@ -4,7 +4,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 import random
 from data import ZHIHU_dataset, read_acl_origin_data
-from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
+from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param, KnowledgeEnhancedAttentionSeq2Seq
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
 from preprocess import k_fold_split
@@ -14,7 +14,7 @@ import argparse
 import os
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge]', default='knowledge')
+parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
 args = parser.parse_args()
@@ -130,7 +130,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
     metric = MetricGenerator()
-    optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
     warmup_epoch = -1
@@ -270,6 +270,15 @@ if __name__ == '__main__':
                                            device=device)
     elif args.model == 'simple':
         seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
+    elif args.model == 'attention':
+        seq2seq = KnowledgeEnhancedAttentionSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+                                           embed_size=config_seq2seq.embedding_size,
+                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
+                                           encoder_input_dim=config_seq2seq.embedding_size * 2,
+                                           encoder_output_dim=512, encoder_nheads=4,
+                                           lstm_layer=config_seq2seq.lstm_layer_num,
+                                           attention_size=config_seq2seq.attention_size,
+                                           device=device, mask_idx=train_all_dataset.word2idx['<pad>'])
     else:
         raise NotImplementedError(f'{args.model} not supported')
 
