@@ -16,13 +16,16 @@ class config_train_discriminator:
 
 class config_train_generator:
     epoch = 150
-    batch_size = 128
+    batch_size = 64
     learning_rate = 1e-3
     fold_k = 1
     is_save_model = True
     grad_clip_norm_type = 2.0
     grad_clip_max_norm = 10.0
     model_init_way = 'noraml'
+    evaluate_log_format = 'epoch {:03d} train_loss {:.4f} valid_loss {:.4f} test_loss {:.4f}\n' \
+                          'bleu2 {:.4f} bleu3 {:.4f} bleu4 {:.4f}\n' \
+                          'mixbleu2 {:.4f} mixbleu3 {:.4f} mixbleu4 {:.4f}'
 
 class config_concepnet:
     raw_path = './concepnet/chineseconceptnet.csv'
@@ -39,10 +42,10 @@ class config_zhihu_dataset:
 
     test_data_split_ratio = 1 / 6
     topic_num_limit = 100
-    vocab_size = 50000
+    vocab_size = 50004
     remove_high_freq_top = 0
     topic_padding_num = 5
-    essay_padding_len = 80
+    essay_padding_len = 100
     pretrained_wv_path = {
         'tencent': './zhihu_dataset/pretrained_embeddings/tencent.pretrained.wv',
         'zhihu': './zhihu_dataset/pretrained_embeddings/zhihu.pretrained.wv'
@@ -61,7 +64,7 @@ class config_zhihu_dataset:
 
 
 class config_seq2seq:
-    model_save_fmt = './results/seq2seq/{}/epoch_{}_test_loss_{:.5f}.pt'
+    model_save_fmt = './saved_model/{}/{}/epoch_{}_bleu2_{:.4f}_mixbleu4_{:.4f}.pt'
     model_load_path = None
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True
@@ -72,12 +75,13 @@ class config_seq2seq:
 
     embedding_size = 200
     pretrained_wv_path = {
-        'tencent': './zhihu_dataset/tencent.seq2seq.wv',
-        'zhihu': './zhihu_dataset/zhihu.seq2seq.wv'
+        'origin': './zhihu_dataset/tencent.seq2seq.wv',
+        'acl': './zhihu_dataset/acl.seq2seq.wv',
+        'zhihu': './zhihu_dataset/zhihu.seq2seq.wv',
     }
 
 class config_wordcnn:
-    model_save_fmt = './results/wordcnn/{}/epoch_{}_train_acc_{:.5f}.pt'
+    model_save_fmt = './saved_model/wordcnn/{}/epoch_{}_train_acc_{:.5f}.pt'
     model_load_path = None
     embed_size = 64
     channel_nums = [128, 256, 256, 256, 256, 128, 128, 128, 256]

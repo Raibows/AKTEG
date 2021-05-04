@@ -4,10 +4,11 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 import random
 from data import ZHIHU_dataset, read_acl_origin_data
-from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param, KnowledgeEnhancedAttentionSeq2Seq
+from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
 from preprocess import k_fold_split
+from transformer import KnowledgeEnhancedAttentionSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
@@ -272,12 +273,10 @@ if __name__ == '__main__':
         seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
     elif args.model == 'attention':
         seq2seq = KnowledgeEnhancedAttentionSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                           embed_size=config_seq2seq.embedding_size,
+                                           embed_size=200,
                                            pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                           encoder_input_dim=config_seq2seq.embedding_size * 2,
-                                           encoder_output_dim=512, encoder_nheads=4,
-                                           lstm_layer=config_seq2seq.lstm_layer_num,
-                                           attention_size=config_seq2seq.attention_size,
+                                           encoder_input_dim=int(config_seq2seq.embedding_size * 0.8),
+                                           encoder_output_dim=192*3, encoder_nheads=3, attention_size=256,
                                            device=device, mask_idx=train_all_dataset.word2idx['<pad>'])
     else:
         raise NotImplementedError(f'{args.model} not supported')
