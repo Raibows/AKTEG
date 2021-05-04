@@ -18,12 +18,11 @@ class config_train_generator:
     epoch = 150
     batch_size = 64
     learning_rate = 1e-3
-    fold_k = 1
     is_save_model = True
     grad_clip_norm_type = 2.0
     grad_clip_max_norm = 10.0
     model_init_way = 'noraml'
-    evaluate_log_format = 'epoch {:03d} train_loss {:.4f} valid_loss {:.4f} test_loss {:.4f}\n' \
+    evaluate_log_format = 'epoch {:03d} train_loss {:.4f} test_loss {:.4f} novelty {:.4f}\n' \
                           'bleu2 {:.4f} bleu3 {:.4f} bleu4 {:.4f}\n' \
                           'mixbleu2 {:.4f} mixbleu3 {:.4f} mixbleu4 {:.4f}'
 
@@ -64,7 +63,7 @@ class config_zhihu_dataset:
 
 
 class config_seq2seq:
-    model_save_fmt = './saved_model/{}/{}/epoch_{}_bleu2_{:.4f}_mixbleu4_{:.4f}.pt'
+    model_save_fmt = './saved_model/{}/{}/epoch_{}_bleu2_{:.4f}_novelty_{:.4f}_mixbleu4_{:.4f}.pt'
     model_load_path = None
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True

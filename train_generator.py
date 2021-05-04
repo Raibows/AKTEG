@@ -66,12 +66,11 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
     return loss_mean / len(dataset_loader)
 
 @torch.no_grad()
-def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader,
-                   seq2seq, optimizer, criterion, prediction_path=None, dataset_type='test'):
+def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader, train_dataset,
+                   seq2seq, criterion, prediction_path=None, dataset_type='test'):
     seq2seq.eval()
     loss_mean = 0.0
     teacher_force_ratio = 0.0
-    optimizer.zero_grad()
     show_interval = len(dataset_loader) // 5
     predicts_set = []
     topics_set = []
@@ -119,13 +118,16 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
 
         tools_get_logger('validation').info(f"predictions epoch{epoch} done! the res is in {prediction_path}")
 
-    gram2, gram3, gram4, bleu2, bleu3, bleu4 = metric.value(predicts_set, test_all_dataset, dataset_type=dataset_type)
+    gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty = \
+        metric.value(predicts_set, test_all_dataset, train_dataset, dataset_type=dataset_type)
 
-    return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4
+    return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty
 
-def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir, k_fold):
-    test_all_dataloader = DataLoader(test_all_dataset, batch_size=config_train_generator.batch_size,
+def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir):
+    test_all_dataloader = DataLoader(test_all_dataset, batch_size=batch_size, shuffle=False,
                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
+    train_all_dataloader = DataLoader(train_all_dataset, batch_size=batch_size, shuffle=True,
+                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
 
     tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
@@ -143,61 +145,45 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     best_save_path = None
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
     train_start_time = tools_get_time()
-    kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
     for ep in range(epoch_num):
-        train_loss = 0.0
-        valid_loss = 0.0
-        valid_loss_t = 0.0
         # if ep >= 9:
         #     begin_teacher_force_ratio *= 0.99
         #     begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
-        for fold_no, (train_dataloader, valid_dataloader) in enumerate(kfolds):
-            train_loss_t = train_generator(ep, train_all_dataset, train_dataloader, seq2seq,
+        train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
-            train_loss += train_loss_t
-            if valid_dataloader:
-                valid_loss_t, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, train_all_dataset, valid_dataloader, seq2seq,
-                                              optimizer, criterion, prediction_path=None, dataset_type='valid')
-                valid_loss += valid_loss_t
-                tools_get_logger('train').info(f'epoch {ep} fold {fold_no} done '
-                                           f'train_loss {train_loss_t:.4f} valid_loss {valid_loss_t:.4f}')
-
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4 = test_generator(ep, metric, test_all_dataset, test_all_dataloader, seq2seq,
-                                              optimizer, criterion, prediction_path=prediction_path, dataset_type='test')
-
-        train_loss /= len(kfolds)
-        valid_loss /= len(kfolds)
-        # train_all_dataset.shuffle_memory()
+        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty = test_generator(ep, metric, test_all_dataset,
+                                                                             test_all_dataloader, train_all_dataset,
+                                                                             seq2seq, criterion,
+                                                                             prediction_path=prediction_path,
+                                                                             dataset_type='test')
 
         if ep > warmup_epoch:
             scheduler.step(gram2)
         else:
             warmup_scheduler.step()
 
-        if valid_loss > 0.0:
-            writer.add_scalar('Loss/valid', valid_loss, ep)
         writer.add_scalar('Loss/train', train_loss, ep)
         writer.add_scalar('Loss/test', test_loss, ep)
         writer.add_scalar('Bleu/gram2', gram2, ep)
         writer.add_scalar('Bleu/mixgram4', bleu4, ep)
-        with open(prediction_path, 'a', encoding='utf-8') as file:
-            file.write(f'epoch {ep}\ntrain_loss{train_loss:.4f}\nvalid_loss{valid_loss:.4f}\ntest_loss{test_loss:.4f}')
-            file.write(f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
-                       f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}')
+        writer.add_scalar('Novelty', novelty, ep)
 
-        tools_get_logger('train').info(f'epoch {ep} done\n'
-                                       f'train_loss {train_loss:.4f} valid_loss {valid_loss:.4f} test_loss {test_loss:.4f}\n'
-                                       f'test_gram2 {gram2:.4f} test_gram3 {gram3:.4f} test_gram4 {gram4:.4f}\n'
-                                       f'test_bleu2 {bleu2:.4f} test_bleu3 {bleu3:.4f} test_bleu4 {bleu4:.4f}\n'
-                                       f'now best_gram2 {best_save_bleu2:.5f}')
-        evaluate_summary = [ep, train_loss, valid_loss, test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4]
+        evaluate_print = f'train_loss {train_loss:.4f} test_loss {test_loss:.4f} novelty {novelty:.4f}\n' \
+                         f'bleu2 {gram2:.4f} bleu3 {gram3:.4f} bleu4 {gram4:.4f}\n' \
+                         f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n'
+        with open(prediction_path, 'a', encoding='utf-8') as file:
+            file.write(f'epoch {ep}\n')
+            file.write(evaluate_print)
+
+        tools_get_logger('train').info(evaluate_print + f'now best_gram2 {best_save_bleu2:.5f}')
+        evaluate_summary = [ep, train_loss, test_loss, novelty, gram2, gram3, gram4, bleu2, bleu3, bleu4]
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
         if config_train_generator.is_save_model and (gram2 > best_save_bleu2 or True):
-            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2, bleu4)
+            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2, novelty, bleu4)
             tools_make_dir(save_path)
             if best_save_path == None:
                 tools_copy_file('./config.py', save_path + '.config.py')
@@ -208,7 +194,6 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
             torch.save(seq2seq.state_dict(), save_path)
             tools_get_logger('train').info(
                 f"epoch {ep} saving model bleu2 {gram2:.4f} to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")
-        # kfolds = k_fold_split(train_all_dataset, batch_size, k=k_fold)
 
     tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
                                    f"the best model has saved to {best_save_path} \n"
@@ -293,7 +278,6 @@ if __name__ == '__main__':
     train_generator_process(epoch_num=config_train_generator.epoch,
                             batch_size=config_train_generator.batch_size,
                             writer=writer, log_dir=log_dir,
-                            k_fold=config_train_generator.fold_k,
                             train_all_dataset=train_all_dataset,
                             test_all_dataset=test_all_dataset,
                             seq2seq=seq2seq)

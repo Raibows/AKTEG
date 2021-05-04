@@ -37,15 +37,42 @@ class MetricDiscriminator():
         self.acc_real.clear()
         self.loss.clear()
 
+
 class MetricGenerator():
-    def __init__(self):
+    def __init__(self, novelty_threshold=0.5):
         self.refers_train = None
         self.refers_val = None
         self.refers_test = None
         self.sm = SmoothingFunction()
+        self.novelty_built_dict = {}
+        self.novelty_threshold = novelty_threshold
         pass
 
-    def value(self, generate_samples_idx, dataset:ZHIHU_dataset, dataset_type='test'):
+    def jaccard_similarity(self, x0, x1):
+        x0, x1 = set(x0), set(x1)
+        return len(x0.intersection(x1)) / len(x0.union(x1))
+
+    def build_novelty_dict(self, test_topics, train_topics, train_target_essays):
+        for testt in test_topics:
+            testt = tuple(testt)
+            if testt in self.novelty_built_dict: continue
+            self.novelty_built_dict[testt] = []
+            temp = self.novelty_threshold
+            while len(self.novelty_built_dict[testt]) == 0:
+                for traint, traine in zip(train_topics, train_target_essays):
+                    if self.jaccard_similarity(testt, traint) > temp:
+                        self.novelty_built_dict[testt].append(traine)
+                temp *= 0.5 # decrease the threshold for filling
+
+
+    def novelty_evaluate(self, test_topic, generated_essay):
+        max_similarity = 0.0
+        test_topic = tuple(test_topic)
+        for te in self.novelty_built_dict[test_topic]:
+            max_similarity = max(max_similarity, self.jaccard_similarity(generated_essay, te))
+        return 1 - max_similarity
+
+    def value(self, generate_samples_idx, test_dataset:ZHIHU_dataset, train_dataset:ZHIHU_dataset=None, dataset_type='test'):
         refer_samples = []
         source_list = []
         generate_samples = []
@@ -56,26 +83,36 @@ class MetricGenerator():
         total_bleu3 = 0
         total_bleu4 = 0
 
+
         for i, gs in enumerate(generate_samples_idx):
             if isinstance(gs, torch.Tensor):
                 generate_samples_idx[i] = gs.tolist()
-            generate_samples.append(dataset.unpadded_idxs(generate_samples_idx[i], end_token='<eos>'))
+            generate_samples.append(test_dataset.unpadded_idxs(generate_samples_idx[i], end_token='<eos>'))
 
-
-        for si in dataset.data_topics:
+        for si in test_dataset.data_topics:
             if isinstance(si, torch.Tensor):
                 si = si.tolist()
-            source_list.append(dataset.unpadded_idxs(si, end_token='<pad>'))
+            source_list.append(test_dataset.unpadded_idxs(si, end_token='<pad>'))
 
 
-        sw = [dataset.convert_idx2word(sorted(x), sep='') for x in source_list]
+        train_target_essays = []
+        train_topics = []
+        if len(self.novelty_built_dict) == 0:
+            assert isinstance(train_dataset, ZHIHU_dataset)
+            for traint, tar in zip(train_dataset.data_topics, train_dataset.data_essays['target']):
+                train_target_essays.append(train_dataset.unpadded_idxs(tar.tolist(), end_token='<eos>'))
+                train_topics.append(train_dataset.unpadded_idxs(traint.tolist(), end_token='<eos>'))
+            self.build_novelty_dict(source_list, train_topics, train_target_essays)
+
+
+        sw = [test_dataset.convert_idx2word(sorted(x), sep='') for x in source_list]
         # sw = list(map(lambda x: "".join([idx2word[w.item()] for w in x]), sp))
         if dataset_type == 'train':
             if self.refers_train is None:
-                for i, ti in enumerate(dataset.data_essays['target']):
+                for i, ti in enumerate(test_dataset.data_essays['target']):
                     if isinstance(ti, torch.Tensor):
                         ti = ti.tolist()
-                    refer_samples.append(dataset.unpadded_idxs(ti, end_token='<eos>'))
+                    refer_samples.append(test_dataset.unpadded_idxs(ti, end_token='<eos>'))
                 multi_refers = defaultdict(list)
                 for w, r in zip(sw, refer_samples):
                     multi_refers[w].append(r)
@@ -84,30 +121,32 @@ class MetricGenerator():
         elif dataset_type == 'test':
             if self.refers_test is None:
                 multi_refers = defaultdict(list)
-                for i, ti in enumerate(dataset.data_essays['target']):
+                for i, ti in enumerate(test_dataset.data_essays['target']):
                     if isinstance(ti, torch.Tensor):
                         ti = ti.tolist()
-                    refer_samples.append(dataset.unpadded_idxs(ti, end_token='<eos>'))
+                    refer_samples.append(test_dataset.unpadded_idxs(ti, end_token='<eos>'))
                 for w, r in zip(sw, refer_samples):
                     multi_refers[w].append(r)
                 self.refers_test = multi_refers
             self.refers = self.refers_test
         elif dataset_type == 'val':
             if self.refers_val is None:
-                for i, ti in enumerate(dataset.data_essays['target']):
+                for i, ti in enumerate(test_dataset.data_essays['target']):
                     if isinstance(ti, torch.Tensor):
                         ti = ti.tolist()
-                    refer_samples.append(dataset.unpadded_idxs(ti, end_token='<eos>'))
+                    refer_samples.append(test_dataset.unpadded_idxs(ti, end_token='<eos>'))
                 multi_refers = defaultdict(list)
                 for w, r in zip(sw, refer_samples):
                     multi_refers[w].append(r)
                 self.refers_val = multi_refers
             self.refers = self.refers_val
 
-        for w, h in zip(sw, generate_samples):
+
+        novelty_mean = 0.0
+        for w, h, t in zip(sw, generate_samples, source_list):
             refers = self.refers[w]
-            if len(refers) == 0:
-                raise Exception("Error")
+
+            novelty_mean += self.novelty_evaluate(t, h)
             total_gram2_p += sentence_bleu(refers, h, weights=(0, 1, 0, 0), smoothing_function=self.sm.method1)
             total_gram3_p += sentence_bleu(refers, h, weights=(0, 0, 1, 0), smoothing_function=self.sm.method1)
             total_gram4_p += sentence_bleu(refers, h, weights=(0, 0, 0, 1), smoothing_function=self.sm.method1)
@@ -120,7 +159,7 @@ class MetricGenerator():
 
 
         return total_gram2_p / len(sw), total_gram3_p / len(sw), total_gram4_p / len(sw), total_bleu2 / len(
-                sw), total_bleu3 / len(sw), total_bleu4 / len(sw)
+                sw), total_bleu3 / len(sw), total_bleu4 / len(sw), novelty_mean / len(sw)
 
 if __name__ == '__main__':
     from config import config_concepnet, config_zhihu_dataset, config_seq2seq
@@ -147,27 +186,28 @@ if __name__ == '__main__':
                                      prior=train_all_dataset.get_prior(), encode_to_tensor=True)
     test_all_dataset.print_info()
     test_all_dataloader = DataLoader(test_all_dataset, batch_size=128)
-    seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                       embed_size=config_seq2seq.embedding_size,
-                                       pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
-                                       encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-                                       encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-                                       lstm_layer=config_seq2seq.lstm_layer_num,
-                                       attention_size=config_seq2seq.attention_size,
-                                       device=device)
-    init_param(seq2seq, init_way='normal')
-    seq2seq = seq2seq.to(device)
-    seq2seq.eval()
-
+    # seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+    #                                    embed_size=config_seq2seq.embedding_size,
+    #                                    pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
+    #                                    encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
+    #                                    encoder_bid=config_seq2seq.encoder_lstm_is_bid,
+    #                                    lstm_layer=config_seq2seq.lstm_layer_num,
+    #                                    attention_size=config_seq2seq.attention_size,
+    #                                    device=device)
+    # init_param(seq2seq, init_way='normal')
+    # seq2seq = seq2seq.to(device)
+    # seq2seq.eval()
+    #
     metric = MetricGenerator()
-    dataset_type = 'test'
-    predicts_samples_idxs = prediction(seq2seq, train_all_dataset, test_all_dataloader, device, None)
-    gram2, gram3, gram4, bleu2, bleu3, bleu4 = metric.value(predicts_samples_idxs, test_all_dataset,
-                                                            dataset_type=dataset_type, get_ret=False)
+    # dataset_type = 'test'
+    # predicts_samples_idxs = prediction(seq2seq, train_all_dataset, test_all_dataloader, device, None)
+    gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty_mean = metric.value(test_all_dataset.data_essays['target'], test_all_dataset,
+                                                                          train_all_dataset, dataset_type='test')
 
-    print(f'evaluate done on {dataset_type}!\n'
+    print(f'evaluate done on test!\n'
           f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
-          f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}')
+          f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}\n'
+          f'novelty_mean {novelty_mean:.4f}')
 
 
 
