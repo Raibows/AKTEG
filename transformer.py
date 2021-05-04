@@ -47,10 +47,10 @@ class AttentionBasedEncoder(nn.Module):
         self.W_q = nn.Linear(embed_size, input_dim)
         self.W_k = nn.Linear(embed_size, input_dim)
         self.W_v = nn.Linear(embed_size, input_dim)
-        self.W_h = nn.Linear(output_dim, output_dim)
-        self.W_c = nn.Linear(output_dim, output_dim, bias=False)
-        self.output_size = output_dim
         self.hidden_cell_size = output_dim // nheads
+        self.W_h = nn.Linear(self.hidden_cell_size, self.hidden_cell_size)
+        self.W_c = nn.Linear(self.hidden_cell_size, self.hidden_cell_size)
+        
 
 
     def forward(self, topic_embeddings, mask):
@@ -61,7 +61,7 @@ class AttentionBasedEncoder(nn.Module):
         outs, hiddens = self.attention_layer.forward(query, key, value, mask)
         # hiddens [nhead, batch, seqlen, temp]
         state = torch.sum(hiddens, dim=2) #[nhead, batch, output_dim]
-        state = torch.tanh(state).unsqueeze(0)
+        state = torch.tanh(state)
         h, c = self.W_h(state), self.W_c(state)
 
         return outs, (h, c)
@@ -70,21 +70,17 @@ class Decoder2(nn.Module):
     def __init__(self, vocab_size, embed_size, layer_num, encoder_output_size, encoder_hidden_cell_size):
         super(Decoder2, self).__init__()
         self.input_size = embed_size + encoder_output_size + embed_size # decoder_embed + encoder_out + memory_embed
-        temp = self.input_size // 2
-        self.sharp_linear = nn.Linear(self.input_size, temp)
         self.layer_num = layer_num
         self.embed_size = embed_size
-        self.hidden_size = encoder_output_size
-        self.input_size = temp
+        self.hidden_size = encoder_hidden_cell_size
         self.lstm = nn.LSTM(self.input_size, encoder_hidden_cell_size, layer_num,
                             bidirectional=False, dropout=0.5 if layer_num > 1 else 0.0)
-        self.fc = nn.Linear(encoder_output_size, vocab_size)
+        self.fc = nn.Linear(encoder_hidden_cell_size, vocab_size)
         self.dropout = nn.Dropout(0.5)
 
 
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
-        input_to_lstm = self.sharp_linear.forward(input_to_lstm)
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
 
         logits = self.fc(outs.squeeze(0))
@@ -97,11 +93,10 @@ class KnowledgeEnhancedAttentionSeq2Seq(nn.Module):
         super(KnowledgeEnhancedAttentionSeq2Seq, self).__init__()
         self.pretrained_wv_path = pretrained_wv_path
         self.encoder = AttentionBasedEncoder(embed_size, encoder_input_dim, encoder_output_dim, encoder_nheads, device)
-        self.decoder = Decoder2(vocab_size, embed_size, encoder_nheads,
-                                self.encoder.output_size, self.encoder.hidden_cell_size)
+        self.decoder = Decoder2(vocab_size, embed_size, encoder_nheads, encoder_output_dim, self.encoder.hidden_cell_size)
         self.memory_neural = Memory_neural(embed_size, self.decoder.hidden_size)
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.W_1 = nn.Linear(self.encoder.output_size, attention_size, bias=False)
+        self.W_1 = nn.Linear(encoder_output_dim, attention_size, bias=False)
         self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
         self.mask_idx = torch.tensor(mask_idx, dtype=torch.int64, device=device)
         self.vocab_size = vocab_size
@@ -204,22 +199,22 @@ class KnowledgeEnhancedAttentionSeq2Seq(nn.Module):
 if __name__ == '__main__':
 
 
-    pass
-    batch = 64
-    maxlen = 80
-    dim = 100
-    # print(outs.argmax(dim=2))
-    idx = torch.randint(0, 100, [batch, maxlen])
-    idxlen = torch.randint(1, maxlen, [batch])
-    for i in range(batch):
-        idx[i][idxlen[i]:] = 0
-    print(idx)
-    mask = get_mask_matrix(idx, 0)
-    query = torch.rand([batch, maxlen, dim])
-    key = torch.rand([batch, maxlen, dim])
-    value = torch.rand([batch, maxlen, dim])
-    model = MultiheadAttention(dim, 300, 6, dropout=0.5)
-    res = model.forward(query, key, value, mask=mask.unsqueeze(1))
+    # pass
+    # batch = 64
+    # maxlen = 80
+    # dim = 100
+    # # print(outs.argmax(dim=2))
+    # idx = torch.randint(0, 100, [batch, maxlen])
+    # idxlen = torch.randint(1, maxlen, [batch])
+    # for i in range(batch):
+    #     idx[i][idxlen[i]:] = 0
+    # print(idx)
+    # mask = get_mask_matrix(idx, 0)
+    # query = torch.rand([batch, maxlen, dim])
+    # key = torch.rand([batch, maxlen, dim])
+    # value = torch.rand([batch, maxlen, dim])
+    # model = MultiheadAttention(dim, 300, 6, dropout=0.5)
+    # res = model.forward(query, key, value, mask=mask.unsqueeze(1))
 
 
 

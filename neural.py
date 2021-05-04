@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from tools import tools_load_pickle_obj, tools_get_logger
-from transformer import MultiheadAttention
 
 class CNNDiscriminator(nn.Module):
     def __init__(self, label_num, vocab_size, embed_size, channel_nums:list,
