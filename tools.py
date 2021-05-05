@@ -88,3 +88,23 @@ def tools_write_log_to_file(fmt, value, path):
         file.write('-*-'*25)
         file.write('\n')
 
+def tools_parse_log_file(path):
+    res = {0: [], 1: [], 2: []}
+    t = 0
+    with open(path, 'r', encoding='utf-8') as file:
+        for i, line in enumerate(file):
+            if (i+1) % 4 == 0:
+                t = 0
+                continue
+            res[t].append(line.strip('\n').strip())
+            t += 1
+    # topic, target, generated
+    return res[0], res[1], res[2]
+
+if __name__ == '__main__':
+    path = 'logs/pretrain_G_magic/21-05-05-17_41_33/epoch_65.predictions'
+    _, _, generated = tools_parse_log_file(path)
+    print(generated)
+
+
+

@@ -23,7 +23,7 @@ class config_train_generator:
     grad_clip_max_norm = 10.0
     model_init_way = 'noraml'
     evaluate_log_format = 'epoch {:03d} train_loss {:.4f} test_loss {:.4f} novelty {:.4f}\n' \
-                          'bleu2 {:.4f} bleu3 {:.4f} bleu4 {:.4f}\n' \
+                          'div1 {:.4f} div2 {:.4f} bleu2 {:.4f} bleu3 {:.4f} bleu4 {:.4f}\n' \
                           'mixbleu2 {:.4f} mixbleu3 {:.4f} mixbleu4 {:.4f}'
 
 class config_concepnet:
