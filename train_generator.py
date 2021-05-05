@@ -9,13 +9,14 @@ from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
 from preprocess import k_fold_split
 from transformer import KnowledgeEnhancedAttentionSeq2Seq
+from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
 import os
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention]', default='knowledge')
+parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
 args = parser.parse_args()
@@ -263,6 +264,14 @@ if __name__ == '__main__':
                                            encoder_input_dim=int(config_seq2seq.embedding_size * 0.8),
                                            encoder_output_dim=192*3, encoder_nheads=3, attention_size=256,
                                            device=device, mask_idx=train_all_dataset.word2idx['<pad>'])
+    elif args.model == 'magic':
+        seq2seq = MagicSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+                               embed_size=config_seq2seq.embedding_size,
+                               pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
+                               encoder_lstm_hidden=512,
+                               encoder_bid=True,
+                               lstm_layer=1,
+                               device=device)
     else:
         raise NotImplementedError(f'{args.model} not supported')
 
