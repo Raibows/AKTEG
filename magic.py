@@ -57,7 +57,7 @@ class Decoder(nn.Module):
     def forward(self, input_to_lstm, init_h, init_c):
         input_to_lstm = input_to_lstm.unsqueeze(0)  # [1-single-token, batch, input_size]
         outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
-        logits = self.fc_out(outs)
+        logits = self.fc_out(outs.squeeze(0))
         return logits, (h, c)
 
 
@@ -66,9 +66,8 @@ class Memory_neural(nn.Module):
         super(Memory_neural, self).__init__()
 
         # using gate mechanism is for step-by-step update
-        # still needs grad descent
 
-        self.W = nn.Linear(decoder_hidden_size, embed_size, bias=True)
+        self.attention = Attention(embed_size, decoder_hidden_size)
         self.U1 = nn.Linear(embed_size, embed_size, bias=False)
         self.V1 = nn.Linear(embed_size, embed_size, bias=False)
         self.U2 = nn.Linear(embed_size, embed_size, bias=False)
@@ -101,14 +100,12 @@ class Memory_neural(nn.Module):
         self.step_mem_embeddings[self.step_mem_embeddings.isnan()] = 1e-31
 
     def forward(self, decoder_hidden_s_t_1):
-        # self.step_mem_embeddings
-        # reshape embeddings to [batch, len, embed_size]
+        # self.step_mem_embeddings [batch, len, embed_size]
 
-        v_t = torch.tanh(self.W(decoder_hidden_s_t_1)).unsqueeze(2)
-        # v_t here is a column vector [batch, v_t] using torch.batch_multiplication
-        q_t = torch.softmax(self.step_mem_embeddings.detach() @ v_t, dim=1)
-        # q_t here is a column vector [batch, q_t]
-        m_t = q_t.permute(0, 2, 1) @ self.step_mem_embeddings.detach()
+        attention = self.attention.forward(self.step_mem_embeddings.detach(), decoder_hidden_s_t_1)
+        # [batch, len, 1]
+
+        m_t = self.step_mem_embeddings.permute(0, 2, 1).detach() @ attention
 
         return m_t
 
