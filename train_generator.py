@@ -104,7 +104,7 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
 
         tools_get_logger('validation').info(f"predictions epoch{epoch} done! the res is in {prediction_path}")
 
-    gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty = \
+    gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = \
         metric.value(predicts_set, test_all_dataset, train_dataset, dataset_type=dataset_type)
 
     return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty
@@ -170,7 +170,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
         evaluate_print = f'train_loss {train_loss:.4f} test_loss {test_loss:.4f}\n' \
                          f'bleu2 {gram2:.4f} bleu3 {gram3:.4f} bleu4 {gram4:.4f}\n' \
-                         f'novelty {novelty} div1 {div1:.4f} div2 {div2:.4f}\n' \
+                         f'novelty {novelty:.4f} div1 {div1:.4f} div2 {div2:.4f}\n' \
                          f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n'
         with open(prediction_path, 'a', encoding='utf-8') as file:
             file.write(f'epoch {ep}\n')

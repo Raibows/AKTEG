@@ -99,7 +99,7 @@ class MetricGenerator():
         dist2 = len(set(intra_bigrams)) / len(intra_bigrams)
         return dist1, dist2
 
-    def diversity_evaluate_from_idxs(self, seq):
+    def diversity_unofficial_way(self, seq):
         """
         :param seq: [[0, 1, 23, ], [3, 24, 6]]
         :return:
@@ -200,7 +200,7 @@ class MetricGenerator():
             total_bleu4 += sentence_bleu(refers, h, weights=(0.25, 0.25, 0.25, 0.25),
                                          smoothing_function=self.sm.method1)
 
-        div1, div2 = self.diversity_evaluate_from_idxs(generate_samples)
+        div1, div2 = self.diversity_evaluate_from_words(generate_samples)
 
         return total_gram2_p / len(sw), total_gram3_p / len(sw), total_gram4_p / len(sw), total_bleu2 / len(
                 sw), total_bleu3 / len(sw), total_bleu4 / len(sw), novelty_mean / len(sw), div1, div2

@@ -51,7 +51,8 @@ def tools_make_dir(path):
         if path[i] == '/':
             t = i
             break
-    os.makedirs(path[:t], exist_ok=True)
+    if t:
+        os.makedirs(path[:t], exist_ok=True)
 
 def tools_copy_file(source_path, target_path):
     shutil.copy(source_path, target_path)
