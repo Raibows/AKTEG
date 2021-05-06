@@ -75,44 +75,32 @@ class MetricGenerator():
             max_similarity = max(max_similarity, self.jaccard_similarity(generated_essay, te))
         return 1 - max_similarity
 
-    def diversity_evaluate_from_words(self, seq):
-        """
-            :param seq - a list of seqs, e.g., ['我 是 一个 好孩子', '今天 天气 很不错']
-        """
-
-        sample_len = len(seq)
-        intra_unigrams = []
-        intra_bigrams = []
-
-        for i in range(sample_len):
-            inter_unigrams = []
-            inter_bigrams = []
-            line = seq[i]
-            line = line.strip().split(' ')
-            inter_unigrams.extend(line)
-            for k in range(len(line) - 1):
-                inter_bigrams.append(" ".join([str(line[k]), str(line[k + 1])]))
-            intra_unigrams.extend(inter_unigrams)
-            intra_bigrams.extend(inter_bigrams)
-
-        dist1 = len(set(intra_unigrams)) / len(intra_unigrams)
-        dist2 = len(set(intra_bigrams)) / len(intra_bigrams)
-        return dist1, dist2
-
-    def diversity_unofficial_way(self, seq):
+    def diversity_evaluate(self, seq, official=True):
         """
         :param seq: [[0, 1, 23, ], [3, 24, 6]]
         :return:
         """
         gram2 = []
         gram1 = []
-        for one in seq:
-            one_len = len(one)
-            gram1.append(len(set(one)) / one_len)
-            temp2 = [f'{one[i]}_{one[i+1]}' for i in range(0, one_len-1)]
-            gram2.append(len(set(temp2)) / one_len)
+        if official:
+            for one in seq:
+                if isinstance(one, str): one = one.strip('\n').strip().split(' ')
+                one = list(map(str, one))
+                one_len = len(one)
+                gram1.extend(one)
+                temp2 = [f'{one[i]}_{one[i+1]}' for i in range(one_len-1)]
+                gram2.extend(temp2)
+            div1, div2 = len(set(gram1)) / len(gram1), len(set(gram2)) / len(gram2)
+        else:
+            for one in seq:
+                if isinstance(one, str): one = one.strip('\n').strip().split(' ')
+                one = list(map(str, one))
+                one_len = len(one)
+                gram1.append(len(set(one)) / one_len)
+                temp2 = [f'{one[i]}_{one[i+1]}' for i in range(0, one_len-1)]
+                gram2.append(len(set(temp2)) / one_len)
 
-        div1, div2 = sum(gram1) / len(gram1), sum(gram2) / len(gram2)
+            div1, div2 = sum(gram1) / len(gram1), sum(gram2) / len(gram2)
         return div1, div2
 
     def value(self, generate_samples_idx, test_dataset:ZHIHU_dataset, train_dataset:ZHIHU_dataset=None, dataset_type='test'):
@@ -200,7 +188,7 @@ class MetricGenerator():
             total_bleu4 += sentence_bleu(refers, h, weights=(0.25, 0.25, 0.25, 0.25),
                                          smoothing_function=self.sm.method1)
 
-        div1, div2 = self.diversity_evaluate_from_words(generate_samples)
+        div1, div2 = self.diversity_evaluate(generate_samples)
 
         return total_gram2_p / len(sw), total_gram3_p / len(sw), total_gram4_p / len(sw), total_bleu2 / len(
                 sw), total_bleu3 / len(sw), total_bleu4 / len(sw), novelty_mean / len(sw), div1, div2
@@ -219,7 +207,7 @@ def evaluate_diversity_res(predictions_dir):
             epoch = int(re.findall(pat, path)[0])
             path = f"{predictions_dir}/{path}"
             _, _, generated = tools_parse_log_file(path)
-            div1, div2 = metric.diversity_evaluate_from_words(generated)
+            div1, div2 = metric.diversity_evaluate(generated)
             print(f'epoch {epoch} div1 {div1:.4f} div2 {div2:.4f}')
             res.append((epoch, div1, div2))
             max_epoch = max(max_epoch, epoch)

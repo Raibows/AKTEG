@@ -107,7 +107,7 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
     gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = \
         metric.value(predicts_set, test_all_dataset, train_dataset, dataset_type=dataset_type)
 
-    return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty
+    return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2
 
 def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir):
     test_all_dataloader = DataLoader(test_all_dataset, batch_size=batch_size, shuffle=False,
