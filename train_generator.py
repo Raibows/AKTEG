@@ -7,13 +7,11 @@ from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
-from preprocess import k_fold_split
-from transformer import KnowledgeEnhancedAttentionSeq2Seq
+from transformer import TransformerSeq2Seq
 from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
-import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic]', default='knowledge')
@@ -40,19 +38,6 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
 
             logits = seq2seq.forward(topic, topic_len, essay_input, mems, teacher_force_ratio=teacher_force_ratio)
             # [batch, essay_max_len, essay_vocab_size]
-
-            # if (i+1) % 10 == 0:
-            #     pass
-                # sample = logits[0]
-                # idx = sample.argmax(dim=-1)
-                # idxs = torch.multinomial(torch.softmax(sample, dim=-1), num_samples=1)
-                # idx = idx.squeeze()[:10].tolist()
-                # idxs = idxs.squeeze()[:10].tolist()
-                # tools_get_logger('argmax').info(f"\n{train_all_dataset.convert_idx2word(idx)}")
-                # tools_get_logger('multin').info(f"\n{train_all_dataset.convert_idx2word(idxs)}")
-
-
-
             logits = logits.view(-1, len(train_all_dataset.word2idx))
             optimizer.zero_grad()
             loss = criterion(logits, essay_target.view(-1))
@@ -150,15 +135,25 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         # if ep >= 9:
         #     begin_teacher_force_ratio *= 0.99
         #     begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
+        # prediction_path = f'{log_dir}/epoch_{ep}.predictions'
+        # test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = test_generator(ep, metric,
+        #                                                                                           test_all_dataset,
+        #                                                                                           test_all_dataloader,
+        #                                                                                           train_all_dataset,
+        #                                                                                           seq2seq, criterion,
+        #                                                                                           prediction_path=prediction_path,
+        #                                                                                           dataset_type='test')
         train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty = test_generator(ep, metric, test_all_dataset,
-                                                                             test_all_dataloader, train_all_dataset,
-                                                                             seq2seq, criterion,
-                                                                             prediction_path=prediction_path,
-                                                                             dataset_type='test')
+        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = test_generator(ep, metric,
+                                                                                                  test_all_dataset,
+                                                                                                  test_all_dataloader,
+                                                                                                  train_all_dataset,
+                                                                                                  seq2seq, criterion,
+                                                                                                  prediction_path=prediction_path,
+                                                                                                  dataset_type='test')
 
         if ep > warmup_epoch:
             scheduler.step(gram2)
@@ -170,16 +165,19 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         writer.add_scalar('Bleu/gram2', gram2, ep)
         writer.add_scalar('Bleu/mixgram4', bleu4, ep)
         writer.add_scalar('Novelty', novelty, ep)
+        writer.add_scalar('Diversity/gram1', div1, ep)
+        writer.add_scalar('Diversity/gram2', div2, ep)
 
-        evaluate_print = f'train_loss {train_loss:.4f} test_loss {test_loss:.4f} novelty {novelty:.4f}\n' \
+        evaluate_print = f'train_loss {train_loss:.4f} test_loss {test_loss:.4f}\n' \
                          f'bleu2 {gram2:.4f} bleu3 {gram3:.4f} bleu4 {gram4:.4f}\n' \
+                         f'novelty {novelty} div1 {div1:.4f} div2 {div2:.4f}\n' \
                          f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n'
         with open(prediction_path, 'a', encoding='utf-8') as file:
             file.write(f'epoch {ep}\n')
             file.write(evaluate_print)
 
         tools_get_logger('train').info(evaluate_print + f'now best_gram2 {best_save_bleu2:.5f}')
-        evaluate_summary = [ep, train_loss, test_loss, novelty, gram2, gram3, gram4, bleu2, bleu3, bleu4]
+        evaluate_summary = [ep, train_loss, test_loss, novelty, div1, div2, gram2, gram3, gram4, bleu2, bleu3, bleu4]
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
@@ -257,13 +255,14 @@ if __name__ == '__main__':
                                            device=device)
     elif args.model == 'simple':
         seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
-    elif args.model == 'attention':
-        seq2seq = KnowledgeEnhancedAttentionSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                           embed_size=200,
-                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                           encoder_input_dim=int(config_seq2seq.embedding_size * 0.8),
-                                           encoder_output_dim=192*3, encoder_nheads=3, attention_size=256,
-                                           device=device, mask_idx=train_all_dataset.word2idx['<pad>'])
+    elif args.model == 'transformer':
+        seq2seq = TransformerSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+                                     embed_size=config_seq2seq.embedding_size,
+                                     pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
+                                     topic_max_num=config_zhihu_dataset.topic_padding_num,
+                                     essay_max_len=config_zhihu_dataset.essay_padding_len,
+                                     device=device,
+                                     mask_idx=train_all_dataset.word2idx['<pad>'])
     elif args.model == 'magic':
         seq2seq = MagicSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
                                embed_size=config_seq2seq.embedding_size,

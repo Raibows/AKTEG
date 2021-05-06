@@ -18,97 +18,191 @@ class MultiheadAttention(nn.Module):
     def forward(self, query, key, value, mask=None):
         # query [batch, len, temp]
         batch = query.shape[0]
-        seqlen = query.shape[1]
-        Q = self.W_q(query).reshape(batch, self.n_heads, seqlen, -1)
-        K = self.W_k(key).reshape(batch, self.n_heads, seqlen, -1)
-        V = self.W_v(value).reshape(batch, self.n_heads, seqlen, -1)
+        head_dim = self.output_dim // self.n_heads
+        Q = self.W_q(query).reshape(batch, self.n_heads, -1, head_dim)
+        K = self.W_k(key).reshape(batch, self.n_heads, -1, head_dim)
+        V = self.W_v(value).reshape(batch, self.n_heads, -1, head_dim)
 
         attention = Q @ K.permute(0, 1, 3, 2) / self.scale #[batch, nhead, seq_len, seq_len]
         if mask != None:
-            temp = torch.exp(attention).masked_fill(mask == False, 0.0)
-            attention = temp / torch.sum(temp, dim=-1).unsqueeze(3)
-            attention[attention.isnan()] = 0.0
-            # attention.masked_fill(mask == False, -1e10)
-        attention = self.dropout(attention)
-        # attention = self.dropout(torch.softmax(attention, dim=-1))
+            attention.masked_fill(mask == False, -1e10)
+
+        attention = self.dropout(torch.softmax(attention, dim=-1))
 
         res = attention @ V #[batch, nhead, seqlen, temp]
 
-        outs = res.permute(0, 2, 1, 3).contiguous().view(batch, seqlen, self.output_dim) # concat nheads
+        outs = res.permute(0, 2, 1, 3).contiguous().view(batch, -1, self.output_dim) # concat nheads
 
         outs = self.fc(outs)
 
-        return outs, res.permute(1, 0, 2, 3)
+        return outs, attention
 
-class AttentionBasedEncoder(nn.Module):
-    def __init__(self, embed_size, input_dim, output_dim, nheads, device):
-        super(AttentionBasedEncoder, self).__init__()
-        self.attention_layer = MultiheadAttention(input_dim, output_dim, nheads, 0.5, device)
-        self.W_q = nn.Linear(embed_size, input_dim)
-        self.W_k = nn.Linear(embed_size, input_dim)
-        self.W_v = nn.Linear(embed_size, input_dim)
-        self.hidden_cell_size = output_dim // nheads
-        self.W_h = nn.Linear(self.hidden_cell_size, self.hidden_cell_size)
-        self.W_c = nn.Linear(self.hidden_cell_size, self.hidden_cell_size)
-        
+class PositionwiseFeedforwardLayer(nn.Module):
+    def __init__(self, hid_dim, pf_dim, dropout):
+        super().__init__()
 
+        self.fc_1 = nn.Linear(hid_dim, pf_dim)
+        self.fc_2 = nn.Linear(pf_dim, hid_dim)
 
-    def forward(self, topic_embeddings, mask):
-        # [batch, seqlen, embed_size]
-        query = self.W_q(topic_embeddings)
-        key = self.W_k(topic_embeddings)
-        value = self.W_v(topic_embeddings)
-        outs, hiddens = self.attention_layer.forward(query, key, value, mask)
-        # hiddens [nhead, batch, seqlen, temp]
-        state = torch.sum(hiddens, dim=2) #[nhead, batch, output_dim]
-        state = torch.tanh(state)
-        h, c = self.W_h(state), self.W_c(state)
+        self.dropout = nn.Dropout(dropout)
 
-        return outs, (h, c)
+    def forward(self, x):
+        # x = [batch size, seq len, hid dim]
 
-class Decoder2(nn.Module):
-    def __init__(self, vocab_size, embed_size, layer_num, encoder_output_size, encoder_hidden_cell_size):
-        super(Decoder2, self).__init__()
-        self.input_size = embed_size + encoder_output_size + embed_size # decoder_embed + encoder_out + memory_embed
-        self.layer_num = layer_num
-        self.embed_size = embed_size
-        self.hidden_size = encoder_hidden_cell_size
-        self.lstm = nn.LSTM(self.input_size, encoder_hidden_cell_size, layer_num,
-                            bidirectional=False, dropout=0.5 if layer_num > 1 else 0.0)
-        self.fc = nn.Linear(encoder_hidden_cell_size, vocab_size)
+        x = self.dropout(torch.relu(self.fc_1(x)))
+
+        # x = [batch size, seq len, pf dim]
+
+        x = self.fc_2(x)
+
+        # x = [batch size, seq len, hid dim]
+
+        return x
+
+class EncoderLayer(nn.Module):
+    def __init__(self, hid_dim, nheads, pf_dim, device):
+        super(EncoderLayer, self).__init__()
+        self.self_attn_norm_layer = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiheadAttention(hid_dim, hid_dim, nheads, dropout=0.5, device=device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, pf_dim, dropout=0.5)
         self.dropout = nn.Dropout(0.5)
 
+    def forward(self, src, src_mask):
+        # src = [batch size, src len, hid dim]
+        # src_mask = [batch size, 1, 1, src len]
 
-    def forward(self, input_to_lstm, init_h, init_c):
-        input_to_lstm = input_to_lstm.unsqueeze(0) # [1-single-token, batch, input_size]
-        outs, (h, c) = self.lstm(input_to_lstm, (init_h, init_c))
+        # self attention
+        _src, _ = self.self_attention.forward(src, src, src, mask=src_mask)
 
-        logits = self.fc(outs.squeeze(0))
+        # dropout, residual connection and layer norm
+        src = self.self_attn_norm_layer(src + self.dropout(_src))
 
-        return self.dropout(logits), (h, c)
+        # src = [batch size, src len, hid dim]
 
-class KnowledgeEnhancedAttentionSeq2Seq(nn.Module):
-    def __init__(self, vocab_size, embed_size, pretrained_wv_path, encoder_input_dim, encoder_output_dim, encoder_nheads,
-                 attention_size, device, mask_idx):
-        super(KnowledgeEnhancedAttentionSeq2Seq, self).__init__()
+        # positionwise feedforward
+        _src = self.positionwise_feedforward(src)
+
+        # dropout, residual and layer norm
+        src = self.ff_layer_norm(src + self.dropout(_src))
+
+        # src = [batch size, src len, hid dim]
+
+        return src
+
+class Encoder(nn.Module):
+    def __init__(self, hid_dim, nlayers, nheads, pf_dim, topic_pad_num, device):
+        super().__init__()
+        self.device = device
+        self.pos_embedding = nn.Embedding(topic_pad_num, hid_dim)
+        self.layers = nn.ModuleList([
+            EncoderLayer(hid_dim, nheads, pf_dim, device) for _ in range(nlayers)
+        ])
+        self.scale = torch.sqrt(torch.tensor([hid_dim], dtype=torch.float, device=device))
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, topic_embeddings, src_mask):
+        batch, topic_len, _ = topic_embeddings.shape
+        pos = torch.arange(0, topic_len).unsqueeze(0).repeat(batch, 1).to(self.device)
+        src = topic_embeddings * self.scale + self.dropout(self.pos_embedding.forward(pos))
+        for layer in self.layers:
+            src = layer.forward(src, src_mask)
+
+        return src
+
+class DecoderLayer(nn.Module):
+    def __init__(self, hid_dim, nheads, pf_dim, device):
+        super(DecoderLayer, self).__init__()
+        self.self_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.enc_attn_layer_norm = nn.LayerNorm(hid_dim)
+        self.ff_layer_norm = nn.LayerNorm(hid_dim)
+        self.self_attention = MultiheadAttention(hid_dim, hid_dim, nheads, 0.5, device)
+        self.encoder_attention = MultiheadAttention(hid_dim, hid_dim, nheads, 0.5, device)
+        self.positionwise_feedforward = PositionwiseFeedforwardLayer(hid_dim, pf_dim, 0.5)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, trg_embeddings, enc_src, trg_mask, src_mask):
+        # trg_embeddings = [batch size, trg len, hid dim]
+        # enc_src = [batch size, src len, hid dim]
+        # trg_mask = [batch size, 1, trg len, trg len]
+        # src_mask = [batch size, 1, 1, src len]
+        _trg, _ = self.self_attention.forward(trg_embeddings, trg_embeddings, trg_embeddings, trg_mask)
+        trg = self.self_attn_layer_norm(trg_embeddings + self.dropout(_trg))
+        _trg, attention = self.encoder_attention.forward(trg_embeddings, enc_src, enc_src, src_mask)
+        trg = self.enc_attn_layer_norm(trg + self.dropout(_trg))
+        _trg = self.positionwise_feedforward.forward(trg)
+        trg = self.ff_layer_norm(trg + self.dropout(_trg))
+
+        return trg, attention
+
+class Decoder(nn.Module):
+    def __init__(self, hid_dim, nlayers, nheads, pf_dim, max_essay_len, device):
+        super(Decoder, self).__init__()
+        self.device = device
+        self.pos_embedding = nn.Embedding(max_essay_len, hid_dim)
+        self.layers = nn.ModuleList([
+            DecoderLayer(hid_dim, nheads, pf_dim, device) for _ in range(nlayers)
+        ])
+        self.scale = torch.sqrt(torch.tensor([hid_dim], dtype=torch.float, device=device))
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, essay_embeddings, enc_src, trg_mask, src_mask):
+        # essay_embeddings = [batch size, trg len, hid dim]
+        # enc_src = [batch size, src len, hid dim]
+        # trg_mask = [batch size, 1, trg len, trg len]
+        # src_mask = [batch size, 1, 1, src len]
+        batch, trg_len, _ = essay_embeddings.shape
+        pos = torch.arange(0, trg_len).unsqueeze(0).repeat(batch, 1).to(self.device)
+        trg = essay_embeddings * self.scale + self.dropout(self.pos_embedding.forward(pos))
+        for layer in self.layers:
+            trg, attention = layer.forward(trg, enc_src, trg_mask, src_mask)
+
+         #[batch, trglen, embed_size]
+        return trg, attention
+
+class TransformerSeq2Seq(nn.Module):
+    def __init__(self, vocab_size, embed_size, pretrained_wv_path, topic_max_num, essay_max_len, device, mask_idx):
+        super(TransformerSeq2Seq, self).__init__()
         self.pretrained_wv_path = pretrained_wv_path
-        self.encoder = AttentionBasedEncoder(embed_size, encoder_input_dim, encoder_output_dim, encoder_nheads, device)
-        self.decoder = Decoder2(vocab_size, embed_size, encoder_nheads, encoder_output_dim, self.encoder.hidden_cell_size)
-        self.memory_neural = Memory_neural(embed_size, self.decoder.hidden_size)
+        self.encoder = Encoder(embed_size, 3, 4, 400, topic_max_num, device)
+        self.decoder = Decoder(embed_size, 3, 4, 400, essay_max_len, device)
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.W_1 = nn.Linear(encoder_output_dim, attention_size, bias=False)
-        self.W_2 = nn.Linear(self.decoder.hidden_size, attention_size, bias=False)
+        self.fc_out = nn.Linear(embed_size, vocab_size)
+        self.embed_size = embed_size
         self.mask_idx = torch.tensor(mask_idx, dtype=torch.int64, device=device)
         self.vocab_size = vocab_size
         self.device = device
         self.dropout = nn.Dropout(0.5)
 
-    def get_mask_matrix(self, idx):
-        batch, maxlen = idx.shape
-        mask = (idx != self.mask_idx).unsqueeze(1).expand(batch, maxlen, maxlen)
-        mask = mask & mask.permute(0, 2, 1)
+    def make_src_mask(self, src):
 
-        return mask.unsqueeze(1)
+        # src = [batch size, src len]
+
+        src_mask = (src != self.mask_idx).unsqueeze(1).unsqueeze(2)
+
+        # src_mask = [batch size, 1, 1, src len]
+
+        return src_mask
+
+    def make_trg_mask(self, trg):
+
+        # trg = [batch size, trg len]
+
+        trg_pad_mask = (trg != self.mask_idx).unsqueeze(1).unsqueeze(2)
+
+        # trg_pad_mask = [batch size, 1, 1, trg len]
+
+        trg_len = trg.shape[1]
+
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=self.device)).bool()
+
+        # trg_sub_mask = [trg len, trg len]
+
+        trg_mask = trg_pad_mask & trg_sub_mask
+
+        # trg_mask = [batch size, 1, trg len, trg len]
+
+        return trg_mask
 
     def forward_only_embedding_layer(self, token):
         """
@@ -117,83 +211,33 @@ class KnowledgeEnhancedAttentionSeq2Seq(nn.Module):
         """
         if token.dim() == 1:
             token = token.unsqueeze(1)
-        embeddings = self.embedding_layer.forward(token.permute(1, 0))
-        return embeddings
-
-    def before_feed_to_decoder(self, last_step_output_token_embeddings, last_step_decoder_lstm_hidden,
-                               last_step_decoder_lstm_memory, topics_representations):
-        # mems [batch, mem_idx_per_sample]
-
-        # calculate e_(y_{t-1})
-        e_y_t_1 = last_step_output_token_embeddings
-
-        # calculate c_{t}
-        pre_t_matrix = self.W_1.forward(topics_representations)  # [batch, topic_num, temp]
-        query_t = self.W_2.forward(last_step_decoder_lstm_memory).unsqueeze(2)
-        # query_t [batch, 1, temp] for using add broadcast
-        e_t_i = pre_t_matrix @ query_t  # [batch, topic_num, 1]
-        alpha_t_i = torch.softmax(e_t_i, dim=1)  # [batch, topic_num, 1]
-        c_t = topics_representations.permute(0, 2, 1) @ alpha_t_i
-
-        # calculate m_{t}
-        m_t = self.memory_neural.forward(last_step_decoder_lstm_hidden)
-
-        return torch.cat([e_y_t_1.squeeze(), c_t.squeeze(), m_t.squeeze()], dim=1)
-
-    def clear_memory_neural_step_state(self):
-        self.memory_neural.step_mem_embeddings = None
-
-    def init_memory_neural_step_state(self, begin_embeddings):
-        self.memory_neural.step_mem_embeddings = begin_embeddings.permute(1, 0, 2)
-        # step_mem_embeddings
-        # reshape embeddings to [batch, len, embed_size]
+        embeddings = self.embedding_layer.forward(token)
+        return self.dropout(embeddings)
 
     def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
+        batch = topic.shape[0]
+        topic_mask = self.make_src_mask(topic)
+        topic_embeddings = self.forward_only_embedding_layer(topic)
+        enc_src = self.encoder.forward(topic_embeddings, topic_mask)
 
-        # topic_input [topic, topic_len]
-        # topic [batch_size, seq_len]
-        batch_size = topic.shape[0]
-        max_essay_len = essay_input.shape[1]
-        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
-        teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
+        if abs(teacher_force_ratio) < 1e-6: #test mode
+            now_idx = essay_input[:, 0].unsqueeze(1)
+            essay_maxlen = essay_input.shape[1]
+            outputs = torch.zeros([batch, essay_maxlen, self.embed_size], device=self.device)
+            for i in range(essay_maxlen):
+                essay_mask = self.make_trg_mask(now_idx)
+                essay_embeddings = self.forward_only_embedding_layer(now_idx)
+                outs, attention = self.decoder.forward(essay_embeddings, enc_src, essay_mask, topic_mask)
+                outs = outs.squeeze()
+                outputs[:, i, :] = outs
+                now_idx = outs.argmax(dim=-1).unsqueeze(1)
+            return self.fc_out(outputs)
+        else: # train mode
+            essay_mask = self.make_trg_mask(essay_input)
+            essay_embeddings = self.forward_only_embedding_layer(essay_input)
+            outs, attention = self.decoder.forward(essay_embeddings, enc_src, essay_mask, topic_mask)
+            return self.fc_out(outs)
 
-        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
-
-        topic_embeddings = self.forward_only_embedding_layer(topic).permute(1, 0, 2)
-        mask = self.get_mask_matrix(topic)
-
-        topics_representations, (h, c) = self.encoder.forward(topic_embeddings, mask)
-        # [batch, topic_pad_num, output_size]
-
-        mem_embeddings = self.forward_only_embedding_layer(mems)
-        # [mem_max_num, batch, embed_size]
-        self.init_memory_neural_step_state(mem_embeddings)
-
-        # first input token is <go>
-        # if lstm layer > 1, then select the topmost layer lstm memory c[-1] and hidden h[-1]
-        now_input = essay_input[:, 0]
-        now_input_embeddings = self.forward_only_embedding_layer(now_input)
-        self.memory_neural.update_memory(now_input_embeddings)
-        now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                        topics_representations)
-
-        for now_step in range(1, max_essay_len):
-            logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
-            decoder_outputs[:, now_step - 1] = logits
-            if teacher_mode_chocie[now_step] < teacher_force_ratio:
-                now_input = essay_input[:, now_step]
-            else:
-                now_input = logits.argmax(dim=-1)
-            now_input_embeddings = self.forward_only_embedding_layer(now_input)
-            self.memory_neural.update_memory(now_input_embeddings)
-            now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                            topics_representations)
-
-        logits, _ = self.decoder.forward(now_decoder_input, h, c)
-        decoder_outputs[:, -1] = logits
-        self.clear_memory_neural_step_state()
-        # [batch, essay_len, essay_vocab_size]
-        return decoder_outputs
 
 
 if __name__ == '__main__':
