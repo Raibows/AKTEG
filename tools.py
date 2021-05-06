@@ -96,7 +96,9 @@ def tools_parse_log_file(path):
             if (i+1) % 4 == 0:
                 t = 0
                 continue
-            res[t].append(line.strip('\n').strip())
+            line = line.strip('\n').strip()
+            if line.startswith('epoch'): break
+            res[t].append(line)
             t += 1
     # topic, target, generated
     return res[0], res[1], res[2]
