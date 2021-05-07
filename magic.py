@@ -119,7 +119,7 @@ class Attention(nn.Module):
         self.attn = nn.Linear(enc_output_size + dec_hid_dim, dec_hid_dim)
         self.v = nn.Linear(dec_hid_dim, 1, bias=False)
 
-    def forward(self, encoder_ouputs, dec_hidden):
+    def forward(self, encoder_ouputs, dec_hidden, enc_mask=None):
         # encoder_outputs [batch, topic_num, enc_output_size]
         # dec_hidden [1, batch, dec_dim]
         batch, topic_num, _ = encoder_ouputs.shape
@@ -127,6 +127,8 @@ class Attention(nn.Module):
         energy = torch.cat([encoder_ouputs, dec_hidden], dim=2)
         energy = torch.tanh(self.attn.forward(energy))
         attention = self.v.forward(energy)  # [batch, topic_num, 1]
+        if enc_mask != None:
+            attention = attention.masked_fill(enc_mask.squeeze().unsqueeze(2) == False, -1e10)
 
         return torch.softmax(attention, dim=1)
 

@@ -132,8 +132,8 @@ if __name__ == '__main__':
         seq2seq = TransformerSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
                                      embed_size=config_seq2seq.embedding_size,
                                      pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                     topic_max_num=config_zhihu_dataset.topic_padding_num,
-                                     essay_max_len=config_zhihu_dataset.essay_padding_len,
+                                     topic_pad_num=config_zhihu_dataset.topic_padding_num,
+                                     essay_pad_len=config_zhihu_dataset.essay_padding_len,
                                      device=device,
                                      mask_idx=train_all_dataset.word2idx['<pad>'])
     elif args.model == 'magic':

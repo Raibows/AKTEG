@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 from neural import Memory_neural
+from magic import Attention
+import random
 
 class MultiheadAttention(nn.Module):
     def __init__(self, input_dim, output_dim, n_heads, dropout, device):
@@ -107,7 +109,7 @@ class Encoder(nn.Module):
         src = topic_embeddings * self.scale + self.dropout(self.pos_embedding.forward(pos))
         for layer in self.layers:
             src = layer.forward(src, src_mask)
-
+        #[batch, len, hidden]
         return src
 
 class DecoderLayer(nn.Module):
@@ -161,11 +163,11 @@ class Decoder(nn.Module):
         return trg, attention
 
 class TransformerSeq2Seq(nn.Module):
-    def __init__(self, vocab_size, embed_size, pretrained_wv_path, topic_max_num, essay_max_len, device, mask_idx):
+    def __init__(self, vocab_size, embed_size, pretrained_wv_path, topic_pad_num, essay_pad_len, device, mask_idx):
         super(TransformerSeq2Seq, self).__init__()
         self.pretrained_wv_path = pretrained_wv_path
-        self.encoder = Encoder(embed_size, 3, 4, 400, topic_max_num, device)
-        self.decoder = Decoder(embed_size, 3, 4, 400, essay_max_len, device)
+        self.encoder = Encoder(embed_size, 3, 4, 400, topic_pad_num, device)
+        self.decoder = Decoder(embed_size, 3, 4, 400, essay_pad_len, device)
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
         self.fc_out = nn.Linear(embed_size, vocab_size)
         self.embed_size = embed_size
@@ -238,7 +240,108 @@ class TransformerSeq2Seq(nn.Module):
             outs, attention = self.decoder.forward(essay_embeddings, enc_src, essay_mask, topic_mask)
             return self.fc_out(outs)
 
+class Knowledge(nn.Module):
+    def __init__(self, embed_size, device):
+        super(Knowledge, self).__init__()
+        self.attention_layer = MultiheadAttention(embed_size, embed_size, 4, 0.5, device)
+        self.self_attention = Attention(embed_size, embed_size)
+        self.self_attention_layer_norm = nn.LayerNorm(embed_size)
+        self.dropout = nn.Dropout(0.5)
+        self.step_embeddings = None
 
+    def forward(self, essay_token_embeddings, topic_enc_outs, topic_mask, essay_token_mask):
+        # essay_token_embeddings [batch, 1, embed_size]
+        # topic_enc_outs [batch, topic_num, embed_size]
+        energy = self.self_attention.forward(topic_enc_outs, essay_token_embeddings.permute(1, 0, 2), topic_mask) #[batch, topic_num, 1]
+        attention = (topic_enc_outs.permute(0, 2, 1) @ energy).permute(0, 2, 1) # [batch, 1, embed_size]
+        query = self.self_attention_layer_norm(essay_token_embeddings + self.dropout(attention)) #[batch, 1, embed_size]
+        outs, _ = self.attention_layer.forward(query, self.step_embeddings, self.step_embeddings, essay_token_mask)
+
+        return outs
+
+    def clear_step_embeddings(self):
+        self.step_embeddings = None
+
+    def init_step_embeddings(self, mem_embeddings):
+        # [batch, max_mem_num, embed_size]
+        self.step_embeddings = mem_embeddings
+
+class KnowledgeTransformerSeq2Seq(nn.Module):
+    def __init__(self, vocab_size, embed_size, pretrained_wv_path, topic_pad_num, essay_pad_len, device, mask_idx):
+        super(KnowledgeTransformerSeq2Seq, self).__init__()
+        self.encoder = Encoder(embed_size, 1, 4, 400, topic_pad_num, device)
+        self.feed_to_decoder_size = embed_size + embed_size
+        self.decoder = nn.GRU(self.feed_to_decoder_size, embed_size, num_layers=1, batch_first=True)
+        self.knowledge = Knowledge(embed_size, device)
+        self.fc_decoder_h = nn.Linear(embed_size, embed_size)
+        self.fc_out = nn.Linear(embed_size, vocab_size)
+        self.dropout = nn.Dropout(0.5)
+        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
+        self.pretrained_wv_path = pretrained_wv_path
+        self.mask_idx = mask_idx
+        self.embed_size = embed_size
+        self.vocab_size = vocab_size
+        self.device = device
+
+    def forward_only_embedding_layer(self, token):
+        """
+        expect [batch, essay_idx_1] or [batch]
+        return [seqlen, batch, embed_size]
+        """
+        if token.dim() == 1:
+            token = token.unsqueeze(1)
+        embeddings = self.embedding_layer.forward(token)
+        return self.dropout(embeddings)
+
+    def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
+        batch, essay_len = essay_input.shape
+        topic_mask = self.make_src_mask(topic)
+        topic_embeddings = self.forward_only_embedding_layer(topic)
+        enc_src = self.encoder.forward(topic_embeddings, topic_mask) #[batch, len, embed_size]
+        mem_embeddings = self.forward_only_embedding_layer(mems)
+        self.knowledge.init_step_embeddings(mem_embeddings.detach())
+        decoder_outputs = torch.zeros([batch, essay_len, self.vocab_size], device=self.device)
+        now_input = essay_input[:, 0].unsqueeze(1) #[batch, 1]
+        h = torch.tanh(self.fc_decoder_h(torch.mean(enc_src, dim=1))).unsqueeze(0) #[1, batch, embed_size]
+        for i in range(1, essay_len):
+            now_mask = self.make_trg_mask(now_input)
+            now_embed = self.forward_only_embedding_layer(now_input)
+            memory = self.knowledge.forward(now_embed, enc_src, topic_mask, now_mask)
+            feeds = torch.cat([now_embed, memory], dim=2) #[batch, 1, 2*embed_size]
+            outs, h = self.decoder.forward(feeds, h)
+            outs = outs.squeeze()
+            logits = self.fc_out(outs) #[batch, vocab_size]
+            decoder_outputs[:, i-1, :] = logits
+
+            if random.random() < teacher_force_ratio:
+                now_input = essay_input[:, i]
+            else:
+                now_input = logits.argmax(dim=1)
+            now_input = now_input.unsqueeze(1)
+
+        outs, _ = self.decoder.forward(feeds, h)
+        outs = outs.squeeze()
+        logits = self.fc_out(outs)
+        decoder_outputs[:, -1, :] = logits
+        self.knowledge.clear_step_embeddings()
+        return decoder_outputs
+
+    def make_src_mask(self, src):
+        # src = [batch size, src len]
+        src_mask = (src != self.mask_idx).unsqueeze(1).unsqueeze(2)
+        # src_mask = [batch size, 1, 1, src len]
+        return src_mask
+
+    def make_trg_mask(self, trg):
+        # trg = [batch size, trg len]
+        trg_pad_mask = (trg != self.mask_idx).unsqueeze(1).unsqueeze(2)
+        # trg_pad_mask = [batch size, 1, 1, trg len]
+        trg_len = trg.shape[1]
+        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=self.device)).bool()
+        # trg_sub_mask = [trg len, trg len]
+        trg_mask = trg_pad_mask & trg_sub_mask
+        # trg_mask = [batch size, 1, trg len, trg len]
+        return trg_mask
 
 if __name__ == '__main__':
 
