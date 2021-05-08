@@ -333,23 +333,21 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
 
 def init_param(self, init_way=None):
     if init_way == 'uniform':
-        for name, param in self.named_parameters():
-            if 'weight' in name:
+        for param in self.parameters():
+            if param.requires_grad:
                 nn.init.uniform_(param.data, -0.08, 0.08)
-            else:
-                nn.init.constant_(param.data, 0)
+    elif init_way == 'xavier':
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.xavier_normal(param.data)
     elif init_way == 'noraml':
-        for name, param in self.named_parameters():
-            if 'weight' in name:
-                nn.init.normal_(param.data, mean=0, std=0.01)
-            else:
-                nn.init.constant_(param.data, 0)
+        for param in self.parameters():
+            if param.requires_grad:
+                nn.init.normal_(param.data, mean=0.0, std=0.08)
     elif init_way == 'kaiming':
-        for name, param in self.named_parameters():
-            if 'weight' in name:
+        for param in self.parameters():
+            if param.requires_grad:
                 nn.init.kaiming_uniform_(param.data, mode='fan_in', nonlinearity='relu')
-            else:
-                nn.init.constant_(param.data, 0)
     if hasattr(self, 'embedding_layer') and hasattr(self, 'pretrained_wv_path'):
         if self.pretrained_wv_path:
             self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(self.pretrained_wv_path), dtype=torch.float))
