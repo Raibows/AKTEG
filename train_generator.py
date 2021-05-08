@@ -7,7 +7,7 @@ from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
-from transformer import TransformerSeq2Seq, KnowledgeTransformerSeq2Seq
+from transformer import KnowledgeTransformerSeq2Seqv3
 from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     elif args.model == 'simple':
         seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
     elif args.model == 'transformer':
-        seq2seq = KnowledgeTransformerSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
+        seq2seq = KnowledgeTransformerSeq2Seqv3(vocab_size=len(train_all_dataset.word2idx),
                                      embed_size=config_seq2seq.embedding_size,
                                      pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
                                      topic_pad_num=config_zhihu_dataset.topic_padding_num,

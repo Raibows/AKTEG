@@ -122,13 +122,15 @@ class Attention(nn.Module):
     def forward(self, encoder_ouputs, dec_hidden, enc_mask=None):
         # encoder_outputs [batch, topic_num, enc_output_size]
         # dec_hidden [1, batch, dec_dim]
+        # enc_mask = [batch, topic_num, 1]
         batch, topic_num, _ = encoder_ouputs.shape
-        dec_hidden = dec_hidden.squeeze(0).unsqueeze(1).repeat(1, topic_num, 1)  # [batch, topic_num, dec_dim]
+        dec_hidden = dec_hidden.squeeze().unsqueeze(1).repeat(1, topic_num, 1)  # [batch, topic_num, dec_dim]
         energy = torch.cat([encoder_ouputs, dec_hidden], dim=2)
         energy = torch.tanh(self.attn.forward(energy))
         attention = self.v.forward(energy)  # [batch, topic_num, 1]
         if enc_mask != None:
-            attention = attention.masked_fill(enc_mask.squeeze().unsqueeze(2) == False, -1e10)
+            enc_mask = enc_mask.squeeze()[:, :topic_num]
+            attention = attention.masked_fill(enc_mask.unsqueeze(2) == False, -1e10)
 
         return torch.softmax(attention, dim=1)
 
