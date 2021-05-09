@@ -24,11 +24,12 @@ def tools_get_logger(name:str='test'):
 tools_tensorboard_writers = {}
 def tools_get_tensorboard_writer(log_dir=None, dir_pre='public'):
     global tools_tensorboard_writer
+    start_time = tools_get_time()
     if not log_dir:
-        log_dir = f'./logs/{dir_pre}/{tools_get_time()}'
+        log_dir = f'./logs/{dir_pre}/{start_time}'
     if dir_pre not in tools_tensorboard_writers:
         tools_tensorboard_writers[dir_pre] = SummaryWriter(log_dir=log_dir)
-    return tools_tensorboard_writers[dir_pre], log_dir
+    return tools_tensorboard_writers[dir_pre], log_dir, start_time
 
 
 def tools_get_time():
@@ -56,6 +57,15 @@ def tools_make_dir(path):
 
 def tools_copy_file(source_path, target_path):
     shutil.copy(source_path, target_path)
+
+def tools_copy_all_suffix_files(target_dir, source_dir='.', suffix='.py'):
+    if target_dir[-1] != '/': target_dir += '/'
+    tools_make_dir(target_dir)
+    src_files = os.listdir(source_dir)
+    for file in src_files:
+        if file.endswith(suffix):
+            tools_copy_file(f'{source_dir}/{file}', f'{target_dir}{file}')
+
 
 def tools_to_gpu(*params, device=torch.device('cpu')):
     return [p.to(device) for p in params]

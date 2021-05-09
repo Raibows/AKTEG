@@ -63,7 +63,7 @@ class config_zhihu_dataset:
 
 
 class config_seq2seq:
-    model_save_fmt = './saved_model/{}/{}/epoch_{}_bleu2_{:.4f}_novelty_{:.4f}_mixbleu4_{:.4f}.pt'
+    model_save_dir_fmt = './saved_model/{}/{}/'
     model_load_path = None
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True

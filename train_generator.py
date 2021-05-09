@@ -3,29 +3,33 @@ from tqdm import tqdm
 from torch import nn, optim
 from torch.utils.data import DataLoader
 import random
+import argparse
+import os
 from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
+    tools_setup_seed, tools_make_dir, tools_copy_all_suffix_files, tools_to_gpu, \
+    tools_batch_idx2words, tools_write_log_to_file
 from transformer import KnowledgeTransformerSeq2Seqv3
 from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
-import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
+parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch', const=config_train_generator.epoch, nargs='?')
+parser.add_argument('--batch', type=int, help='batch size default is config_batch', const=config_train_generator.batch_size, nargs='?')
 args = parser.parse_args()
 if not args.device.startswith('cuda:'):
     args.device = config_train_public.device_name
 
+
+tools_get_logger('train_G').info(f"pid {os.getpid()} using device {args.device} training on {args.dataset} with model {args.model} epoch {args.epoch} batch {args.batch}")
+
 tools_setup_seed(667)
 device = torch.device(args.device)
-# device = torch.device('cuda:0')
-tools_get_logger('train_G').info(f"using device {args.device} training on {args.dataset}")
-
 
 def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force_ratio):
     seq2seq.train()
@@ -109,7 +113,9 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
 
     return loss_mean / len(dataset_loader), gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2
 
-def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer, log_dir):
+def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2seq, batch_size, writer_logdir_starttime):
+    writer, log_dir, start_time = writer_logdir_starttime
+
     test_all_dataloader = DataLoader(test_all_dataset, batch_size=batch_size, shuffle=False,
                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
     train_all_dataloader = DataLoader(train_all_dataset, batch_size=batch_size, shuffle=True,
@@ -121,39 +127,23 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     metric = MetricGenerator()
     optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.93, patience=4, min_lr=6e-6)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
     warmup_epoch = -1
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
-
-
-    best_save_bleu2 = -1e9
-    best_save_mixbleu4 = -1e9
-    best_save_path = None
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
-    train_start_time = tools_get_time()
+    save_py_file = False
+
     for ep in range(epoch_num):
         # if ep >= 9:
         #     begin_teacher_force_ratio *= 0.99
         #     begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
-        # prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        # test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = test_generator(ep, metric,
-        #                                                                                           test_all_dataset,
-        #                                                                                           test_all_dataloader,
-        #                                                                                           train_all_dataset,
-        #                                                                                           seq2seq, criterion,
-        #                                                                                           prediction_path=prediction_path,
-        #                                                                                           dataset_type='test')
         train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
-        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = test_generator(ep, metric,
-                                                                                                  test_all_dataset,
-                                                                                                  test_all_dataloader,
-                                                                                                  train_all_dataset,
-                                                                                                  seq2seq, criterion,
-                                                                                                  prediction_path=prediction_path,
-                                                                                                  dataset_type='test')
+        test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = \
+        test_generator(ep, metric, test_all_dataset, test_all_dataloader, train_all_dataset,
+                           seq2seq, criterion, prediction_path=prediction_path, dataset_type='test')
 
         if ep > warmup_epoch:
             scheduler.step(gram2)
@@ -176,27 +166,23 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
             file.write(f'epoch {ep}\n')
             file.write(evaluate_print)
 
-        tools_get_logger('train').info(evaluate_print + f'now best_gram2 {best_save_bleu2:.5f}')
+        tools_get_logger('train').info(evaluate_print)
         evaluate_summary = [ep, train_loss, test_loss, novelty, div1, div2, gram2, gram3, gram4, bleu2, bleu3, bleu4]
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
-        if config_train_generator.is_save_model and (gram2 > best_save_bleu2 or True):
-            save_path = config_seq2seq.model_save_fmt.format(args.model, train_start_time, ep, gram2, novelty, bleu4)
-            tools_make_dir(save_path)
-            if best_save_path == None:
-                tools_copy_file('./config.py', save_path + '.config.py')
-            if gram2 > best_save_bleu2 and bleu4 > best_save_mixbleu4:
-                best_save_path = save_path
-                best_save_bleu2 = gram2
-                best_save_mixbleu4 = bleu4
+        if config_train_generator.is_save_model:
+            save_dir = config_seq2seq.model_save_dir_fmt.format(args.model, start_time)
+            tools_make_dir(save_dir)
+            save_path = f'{save_dir}epoch_{ep}_{tools_get_time()}.pt'
+            if save_py_file == False:
+                save_py_file = True
+                tools_copy_all_suffix_files(target_dir=f'{save_dir}pyfile/', source_dir='.', suffix='.py')
             torch.save(seq2seq.state_dict(), save_path)
             tools_get_logger('train').info(
-                f"epoch {ep} saving model bleu2 {gram2:.4f} to {save_path}, now best_bleu2 {best_save_bleu2:.4f}")
+                f"epoch {ep} saving model {save_path}")
 
-    tools_get_logger('train').info(f"{config_train_generator.epoch} epochs done \n"
-                                   f"the best model has saved to {best_save_path} \n"
-                                   f"the prediction ")
+    tools_get_logger('train').info(f"{epoch_num} epochs done \n")
 
 
 if __name__ == '__main__':
@@ -281,11 +267,11 @@ if __name__ == '__main__':
     seq2seq.to(device)
     seq2seq.eval()
 
-    writer, log_dir = tools_get_tensorboard_writer(dir_pre=f'pretrain_G_{args.model}')
+    writer, log_dir, start_time = tools_get_tensorboard_writer(dir_pre=f'pretrain_G_{args.model}')
 
-    train_generator_process(epoch_num=config_train_generator.epoch,
-                            batch_size=config_train_generator.batch_size,
-                            writer=writer, log_dir=log_dir,
+    train_generator_process(epoch_num=args.epoch,
+                            batch_size=args.batch,
+                            writer_logdir_starttime=(writer, log_dir, start_time),
                             train_all_dataset=train_all_dataset,
                             test_all_dataset=test_all_dataset,
                             seq2seq=seq2seq)

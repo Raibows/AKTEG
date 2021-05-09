@@ -6,7 +6,7 @@ import random
 from data import ZHIHU_dataset, InputLabel_dataset
 from neural import KnowledgeEnhancedSeq2Seq, CNNDiscriminator, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
-    tools_setup_seed, tools_make_dir, tools_copy_file, tools_to_gpu
+    tools_setup_seed, tools_make_dir, tools_to_gpu
 from preprocess import k_fold_split
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, \
     config_concepnet, config_train_public, config_wordcnn, config_train_discriminator
