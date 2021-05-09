@@ -542,6 +542,7 @@ class Knowledge_v3(nn.Module):
     def __init__(self, embed_size, enc_out_size, device):
         super(Knowledge_v3, self).__init__()
         self.enc_attention = Attention(enc_out_size, embed_size)
+        # self.mem_attention = Attention(embed_size, enc_out_size)
         self.mem_attention = MultiHeadAttentionLayer(enc_out_size, embed_size, 4, 0.5, device)
         self.step_embeddings = None
 
@@ -549,8 +550,11 @@ class Knowledge_v3(nn.Module):
         # dec_embedings [batch, 1, embed_size]
         # topic_enc_outs [batch, topic_num, embed_size]
         energy_t = self.enc_attention.forward(topic_enc_outs, dec_embedings, topic_mask) #[batch, topic_len, 1]
-        attn_t = topic_enc_outs.permute(0, 2, 1) @ energy_t #[batch, embed_size, 1]
-        attn_mem, _ = self.mem_attention.forward(attn_t.permute(0, 2, 1), self.step_embeddings, self.step_embeddings, mask=mem_mask) #[batch, mem_num, 1]
+        attn_t = topic_enc_outs.permute(0, 2, 1) @ energy_t #[batch, enc_out_size, 1]
+        attn_mem, _ = self.mem_attention.forward(attn_t.permute(0, 2, 1), self.step_embeddings, self.step_embeddings, mask=mem_mask)
+        # energy_mem = self.mem_attention.forward(self.step_embeddings, attn_t)
+        # attn_mem = self.step_embeddings.permute(0, 2, 1) @ energy_mem
+
         feeds = torch.cat([dec_embedings, attn_mem], dim=-1)
 
         return feeds # [batch, 1, embed_size + embed_size]
