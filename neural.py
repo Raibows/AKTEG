@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.nn as nn
 from tools import tools_load_pickle_obj, tools_get_logger
@@ -48,11 +50,11 @@ class simple_seq2seq(nn.Module):
         self.hidden_size = hidden_size
         self.dropout = nn.Dropout()
 
-    def forward_test(self, essay_input, topic):
+    def forward_test(self, essay_input, essay_len, topic):
         batch_size = essay_input.shape[0]
-        max_essay_len = essay_input.shape[1]
-
-        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        essay_pad_len = essay_input.shape[1]
+        max_essay_len = torch.max(essay_len).item()
+        decoder_outputs = torch.zeros([batch_size, essay_pad_len, self.vocab_size], device=self.device)
         # topic_embeddings = self.embedding_layer(topic.permute(1, 0))
         topic_embeddings = self.embedding_layer(topic.permute(1, 0))
         essay_input_embeddings = self.embedding_layer(essay_input.permute(1, 0))
@@ -62,6 +64,7 @@ class simple_seq2seq(nn.Module):
         # h, c = torch.rand([1, batch_size, self.hidden_size], device=self.device), torch.rand([1, batch_size, self.hidden_size], device=self.device)
         now_input = essay_input_embeddings[0, :].unsqueeze(0)
 
+        now_step = 0
         for now_step in range(1, max_essay_len):
             now_input = self.dropout(now_input)
             outs, (h, c) = self.decoder(now_input, (h, c))
@@ -73,17 +76,17 @@ class simple_seq2seq(nn.Module):
             now_input = self.embedding_layer(now_input)
 
         outs, (h, c) = self.decoder(now_input, (h, c))
-        decoder_outputs[:, -1] = self.fc(outs.squeeze())
+        decoder_outputs[:, now_step] = self.fc(outs.squeeze())
 
         return decoder_outputs
 
-    def forward_train(self, essay_input, topic):
+    def forward_train(self, essay_input, essay_len, topic):
         # teacher_force_rate = torch.tensor(inputs[-1], dtype=torch.float, device=self.device)
         batch_size = essay_input.shape[0]
-        max_essay_len = essay_input.shape[1]
-        # teacher_choice = torch.rand([max_essay_len], device=self.device)
-
-        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        essay_pad_len = essay_input.shape[1]
+        # teacher_choice = torch.rand([essay_pad_len], device=self.device)
+        max_essay_len = torch.max(essay_len).item()
+        decoder_outputs = torch.zeros([batch_size, essay_pad_len, self.vocab_size], device=self.device)
         # topic_embeddings = self.embedding_layer(topic.permute(1, 0))
         topic_embeddings = self.embedding_layer(topic.permute(1, 0))
         essay_input_embeddings = self.embedding_layer(essay_input).permute(1, 0, 2)
@@ -92,26 +95,25 @@ class simple_seq2seq(nn.Module):
         # h, c = torch.rand([1, batch_size, self.hidden_size], device=self.device), torch.rand([1, batch_size, self.hidden_size], device=self.device)
 
         now_input = essay_input_embeddings[0, :].unsqueeze(0)
-
+        now_step = 0
         for now_step in range(1, max_essay_len):
             now_input = self.dropout(now_input)
             outs, (h, c) = self.decoder(now_input, (h, c))
             decoder_outputs[:, now_step - 1] = self.fc(outs.squeeze())
             now_input = essay_input_embeddings[now_step, :].unsqueeze(0)
 
+        now_step += 1
         outs, (h, c) = self.decoder(now_input, (h, c))
-        decoder_outputs[:, -1] = self.fc(outs.squeeze())
+        decoder_outputs[:, now_step] = self.fc(outs.squeeze())
 
         return decoder_outputs
 
-    def forward(self, *inputs, teacher_force_ratio):
+    def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force_ratio=0.5):
         # topic, topic_len, essay_input, mems
-        essay_input = inputs[2]
-        topic = inputs[0]
         if teacher_force_ratio < 0.01:
-            return self.forward_test(essay_input, topic)
+            return self.forward_test(essay_input, essay_len, topic)
         else:
-            return self.forward_train(essay_input, topic)
+            return self.forward_train(essay_input, essay_len, topic)
 
 class Encoder(nn.Module):
     def __init__(self, embed_size, layer_num, hidden_size, is_bid):
@@ -151,7 +153,6 @@ class Encoder(nn.Module):
         # outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
 
         return outs, (h, c)
-
 
 class Decoder(nn.Module):
     def __init__(self, vocab_size, embed_size, layer_num, encoder_output_size):
@@ -283,16 +284,14 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         # step_mem_embeddings
         # reshape embeddings to [batch, len, embed_size]
 
-    def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
+    def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force_ratio=0.5):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
         batch_size = topic.shape[0]
-        max_essay_len = essay_input.shape[1]
-        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
-        teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
-
-        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        essay_pad_len = essay_input.shape[1]
+        max_essay_len = torch.max(essay_len).item()
+        decoder_outputs = torch.zeros([batch_size, essay_pad_len, self.vocab_size], device=self.device)
 
         topic_embeddings = self.forward_only_embedding_layer(topic)
         topics_representations, (h, c) = self.encoder.forward(topic_embeddings, topic_len)
@@ -311,10 +310,11 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
                                                         topics_representations)
 
+        now_step = 0
         for now_step in range(1, max_essay_len):
             logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
             decoder_outputs[:, now_step - 1] = logits
-            if teacher_mode_chocie[now_step] < teacher_force_ratio:
+            if random.random() < teacher_force_ratio:
                 now_input = essay_input[:, now_step]
             else:
                 now_input = logits.argmax(dim=-1)
@@ -322,14 +322,11 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
                                                             topics_representations)
-
         logits, _ = self.decoder.forward(now_decoder_input, h, c)
-        decoder_outputs[:, -1] = logits
+        decoder_outputs[:, now_step] = logits
         self.clear_memory_neural_step_state()
         # [batch, essay_len, essay_vocab_size]
         return decoder_outputs
-
-
 
 def init_param(self, init_way=None):
     if init_way == 'uniform':

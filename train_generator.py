@@ -9,7 +9,7 @@ from data import ZHIHU_dataset, read_acl_origin_data
 from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_all_suffix_files, tools_to_gpu, \
-    tools_batch_idx2words, tools_write_log_to_file
+    tools_check_if_in_debug_mode, tools_write_log_to_file
 from transformer import KnowledgeTransformerSeq2Seqv3
 from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
@@ -25,6 +25,11 @@ args = parser.parse_args()
 if not args.device.startswith('cuda:'):
     args.device = config_train_public.device_name
 
+if tools_check_if_in_debug_mode():
+    args.device = 'cpu'
+    args.epoch = 2
+    args.batch = 4
+    config_train_public.dataloader_num_workers = 0
 
 tools_get_logger('train_G').info(f"pid {os.getpid()} using device {args.device} training on {args.dataset} with model {args.model} epoch {args.epoch} batch {args.batch}")
 
@@ -35,12 +40,12 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
     seq2seq.train()
     loss_mean = 0.0
     with tqdm(total=len(dataset_loader), desc=f'train{epoch}') as pbar:
-        for i, (topic, topic_len, mems, essay_input, essay_target, _) in enumerate(dataset_loader):
+        for i, (topic, topic_len, mems, essay_input, essay_target, essay_len) in enumerate(dataset_loader):
 
-            topic, topic_len, mems, essay_input, essay_target = \
-                tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
+            topic, topic_len, mems, essay_input, essay_target, essay_len = \
+                tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-            logits = seq2seq.forward(topic, topic_len, essay_input, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=teacher_force_ratio)
             # [batch, essay_max_len, essay_vocab_size]
             logits = logits.view(-1, len(train_all_dataset.word2idx))
             optimizer.zero_grad()
@@ -68,12 +73,12 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
 
 
     with tqdm(total=len(dataset_loader), desc=f'validation{epoch}') as pbar:
-        for i, (topic, topic_len, mems, essay_input, essay_target, _) in enumerate(dataset_loader):
+        for i, (topic, topic_len, mems, essay_input, essay_target, essay_len) in enumerate(dataset_loader):
             pass
-            topic, topic_len, mems, essay_input, essay_target = \
-                tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
+            topic, topic_len, mems, essay_input, essay_target, essay_len = \
+                tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-            logits = seq2seq.forward(topic, topic_len, essay_input, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=teacher_force_ratio)
             # [batch, essay_len, vocab_size]
             if (i+1) % show_interval == 0:
                 sample = logits[random.randint(0, logits.shape[0]-1)]
@@ -245,8 +250,6 @@ if __name__ == '__main__':
         seq2seq = KnowledgeTransformerSeq2Seqv3(vocab_size=len(train_all_dataset.word2idx),
                                      embed_size=config_seq2seq.embedding_size,
                                      pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                     topic_pad_num=config_zhihu_dataset.topic_padding_num,
-                                     essay_pad_len=config_zhihu_dataset.essay_padding_len,
                                      device=device,
                                      mask_idx=train_all_dataset.word2idx['<pad>'])
     elif args.model == 'magic':

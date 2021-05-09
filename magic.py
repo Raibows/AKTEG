@@ -1,3 +1,4 @@
+import random
 import torch
 import torch.nn as nn
 
@@ -185,16 +186,15 @@ class MagicSeq2Seq(nn.Module):
         # step_mem_embeddings
         # reshape embeddings to [batch, len, embed_size]
 
-    def forward(self, topic, topic_len, essay_input, mems, teacher_force_ratio=0.5):
+    def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force_ratio=0.5):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
         batch_size = topic.shape[0]
-        max_essay_len = essay_input.shape[1]
-        teacher_force_ratio = torch.tensor(teacher_force_ratio, dtype=torch.float, device=self.device)
-        teacher_mode_chocie = torch.rand([max_essay_len], device=self.device)
+        essay_pad_len = essay_input.shape[1]
+        max_essay_len = torch.max(essay_len).item()
 
-        decoder_outputs = torch.zeros([batch_size, max_essay_len, self.vocab_size], device=self.device)
+        decoder_outputs = torch.zeros([batch_size, essay_pad_len, self.vocab_size], device=self.device)
 
         topic_embeddings = self.forward_only_embedding_layer(topic)
         topics_representations, (h, c) = self.encoder.forward(topic_embeddings, topic_len)
@@ -212,11 +212,11 @@ class MagicSeq2Seq(nn.Module):
         self.memory_neural.update_memory(now_input_embeddings)
         now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
                                                         topics_representations)
-
+        now_step = 0
         for now_step in range(1, max_essay_len):
             logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
             decoder_outputs[:, now_step - 1] = logits
-            if teacher_mode_chocie[now_step] < teacher_force_ratio:
+            if random.random() < teacher_force_ratio:
                 now_input = essay_input[:, now_step]
             else:
                 now_input = logits.argmax(dim=-1)
@@ -224,9 +224,8 @@ class MagicSeq2Seq(nn.Module):
             self.memory_neural.update_memory(now_input_embeddings)
             now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
                                                             topics_representations)
-
         logits, _ = self.decoder.forward(now_decoder_input, h, c)
-        decoder_outputs[:, -1] = logits
+        decoder_outputs[:, now_step] = logits
         self.clear_memory_neural_step_state()
         # [batch, essay_len, essay_vocab_size]
         return decoder_outputs

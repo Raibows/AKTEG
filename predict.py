@@ -26,11 +26,11 @@ def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
     metric = MetricGenerator()
 
 
-    for i, (topic, topic_len, mems, essay_input, essay_target, _) in enumerate(test_dataloader):
-        topic, topic_len, mems, essay_input, essay_target = \
-            tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, device=device)
+    for i, (topic, topic_len, mems, essay_input, essay_target, essay_len) in enumerate(test_dataloader):
+        topic, topic_len, mems, essay_input, essay_target, essay_len = \
+            tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-        logits = seq2seq.forward(topic, topic_len, essay_input, mems, teacher_force_ratio=0.0)
+        logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=0.0)
         # [batch, essay_len, vocab_size]
         predicts = logits.argmax(dim=-1)
         predicts_set.extend(predicts.tolist())
@@ -132,8 +132,6 @@ if __name__ == '__main__':
         seq2seq = KnowledgeTransformerSeq2Seqv3(vocab_size=len(train_all_dataset.word2idx),
                                      embed_size=config_seq2seq.embedding_size,
                                      pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                     topic_pad_num=config_zhihu_dataset.topic_padding_num,
-                                     essay_pad_len=config_zhihu_dataset.essay_padding_len,
                                      device=device,
                                      mask_idx=train_all_dataset.word2idx['<pad>'])
     elif args.model == 'magic':
