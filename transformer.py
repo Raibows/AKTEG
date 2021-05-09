@@ -556,6 +556,7 @@ class Knowledge_v3(nn.Module):
         # attn_mem = self.step_embeddings.permute(0, 2, 1) @ energy_mem
 
         feeds = torch.cat([dec_embedings, attn_mem], dim=-1)
+        # feeds = torch.cat([dec_embedings, attn_mem.permute(0, 2, 1)], dim=-1)
 
         return feeds # [batch, 1, embed_size + embed_size]
 
