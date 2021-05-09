@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 import shutil
 import torch
-
+import sys
 
 
 tools_loggers_set = {}
@@ -113,6 +113,10 @@ def tools_parse_log_file(path):
             t += 1
     # topic, target, generated
     return res[0], res[1], res[2]
+
+def tools_check_if_in_debug_mode():
+    gettrace = getattr(sys, 'gettrace', lambda: None)
+    return gettrace() is not None
 
 if __name__ == '__main__':
     path = 'logs/pretrain_G_magic/21-05-05-17_41_33/epoch_65.predictions'
