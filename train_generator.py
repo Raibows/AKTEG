@@ -29,7 +29,7 @@ if not args.device.startswith('cuda:'):
 if tools_check_if_in_debug_mode():
     args.device = 'cpu'
     args.epoch = 2
-    args.batch = 4
+    args.batch = 3
     config_train_public.dataloader_num_workers = 0
 
 tools_get_logger('train_G').info(f"pid {os.getpid()} using device {args.device} training on {args.dataset} with model {args.model} epoch {args.epoch} batch {args.batch}")
@@ -123,15 +123,26 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     writer, log_dir, start_time = writer_logdir_starttime
 
     test_all_dataloader = DataLoader(test_all_dataset, batch_size=batch_size, shuffle=False,
-                                     num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
+                                     num_workers=config_train_public.dataloader_num_workers, pin_memory=args.device != 'cpu')
     train_all_dataloader = DataLoader(train_all_dataset, batch_size=batch_size, shuffle=True,
-                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=True)
+                                      num_workers=config_train_public.dataloader_num_workers, pin_memory=args.device != 'cpu')
 
     tools_get_logger('train').info(f"load train data {len(train_all_dataset)} test data {len(test_all_dataset)} "
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
     metric = MetricGenerator()
-    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    if args.load == None or args.model != 'transformer':
+        # from scratch
+        optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    else:
+        # fine-tuning
+        seq2seq.embedding_layer.weight.requires_grad = False
+        optimizer = optim.AdamW(lr=1e-3, params=[
+            {'params': seq2seq.encoder.parameters()},
+            {'params': seq2seq.knowledge.parameters(), 'lr': 7e-4},
+            {'params': seq2seq.decoder.parameters(), 'lr': 7e-4}
+        ])
+
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
     warmup_epoch = -1
@@ -140,9 +151,9 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     save_py_file = False
 
     for ep in range(epoch_num):
-        # if ep >= 9:
-        #     begin_teacher_force_ratio *= 0.99
-        #     begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
+        if ep >= 50 and ep % 10 == 0:
+            begin_teacher_force_ratio *= 0.95
+            begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
         train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
 
@@ -271,6 +282,7 @@ if __name__ == '__main__':
         seq2seq.load_state_dict(torch.load(args.load, map_location=device))
     seq2seq.to(device)
     seq2seq.eval()
+
 
     writer, log_dir, start_time = tools_get_tensorboard_writer(dir_pre=f'pretrain_G_{args.model}')
 

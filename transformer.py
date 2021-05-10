@@ -4,6 +4,7 @@ from neural import Memory_neural
 from magic import Attention
 import random
 
+
 class MultiheadAttention(nn.Module):
     def __init__(self, input_dim, output_dim, n_heads, dropout, device):
         super(MultiheadAttention, self).__init__()
@@ -91,7 +92,7 @@ class MultiHeadAttentionLayer(nn.Module):
             energy = energy.masked_fill(mask == 0, -1e10)
         
         attention = torch.softmax(energy, dim = -1)
-                
+
         #attention = [batch size, n heads, query len, key len]
                 
         x = torch.matmul(self.dropout(attention), V)
@@ -324,7 +325,7 @@ class Knowledge_v3(nn.Module):
         self.res_mem_attention = MultiHeadAttentionLayer(dec_hid_size, embed_size, 4, 0.5, device)
         self.attn_mem_layer_norm = nn.LayerNorm(embed_size)
         self.step_embeddings = None
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, dec_hidden, topic_enc_outs, topic_mask, mem_mask):
         # dec_hidden [batch, 1, dec_hidden_size]
@@ -384,9 +385,8 @@ class Encoder_LSTM(nn.Module):
         h, c = h.view(1, self.direction, h.size(1), -1), c.view(1, self.direction, c.size(1), -1)# [layer, direction, batch, -1]
         h, c = h[:, 0, :, :] + h[:, 1, :, :], c[:, 0, :, :] + c[:, 1, :, :]
         # h, c = torch.cat([h[:, 0, :, :], h[:, 1, :, :]], dim=-1), torch.cat([c[:, 0, :, :], c[:, 1, :, :]], dim=-1)
-
-        # select the real final state
-        # outs = outs[inputs[1]-1, torch.arange(outs.size(1)), :]
+        # outs [batch, seqlen, -1]
+        # h or c [layernum, batch, -1]
 
         return outs, (h, c)
 
@@ -475,17 +475,8 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
         # src_mask = [batch size, 1, 1, src len]
         return src_mask
 
-    def make_trg_mask(self, trg):
-        # trg = [batch size, trg len]
-        trg_pad_mask = (trg != self.mask_idx).unsqueeze(1).unsqueeze(2)
-        # trg_pad_mask = [batch size, 1, 1, trg len]
-        trg_len = trg.shape[1]
-        trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=self.device)).bool()
-        # trg_sub_mask = [trg len, trg len]
-        trg_mask = trg_pad_mask & trg_sub_mask
-        # trg_mask = [batch size, 1, trg len, trg len]
-        return trg_mask
-
+    # todo log.log removed the mem detach
+    # todo
 if __name__ == '__main__':
 
 
