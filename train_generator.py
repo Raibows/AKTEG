@@ -21,6 +21,7 @@ parser.add_argument('--device', type=str, help='choose device name like cuda:0, 
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
 parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch', const=config_train_generator.epoch, nargs='?')
 parser.add_argument('--batch', type=int, help='batch size default is config_batch', const=config_train_generator.batch_size, nargs='?')
+parser.add_argument('--load', type=str, help='load the pretrained model', nargs='?', const=None)
 args = parser.parse_args()
 if not args.device.startswith('cuda:'):
     args.device = config_train_public.device_name
@@ -265,8 +266,9 @@ if __name__ == '__main__':
 
     init_param(seq2seq, init_way=config_train_generator.model_init_way)
 
-    if config_seq2seq.model_load_path:
-        seq2seq.load_state_dict(torch.load(config_seq2seq.model_load_path, map_location=device))
+    if args.load:
+        tools_get_logger('train').info(f"loading pretrained model from {args.load}")
+        seq2seq.load_state_dict(torch.load(args.load, map_location=device))
     seq2seq.to(device)
     seq2seq.eval()
 
