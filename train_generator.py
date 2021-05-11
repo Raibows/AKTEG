@@ -31,6 +31,9 @@ if tools_check_if_in_debug_mode():
     args.epoch = 2
     args.batch = 3
     config_train_public.dataloader_num_workers = 0
+    writer_pre = 'public'
+else:
+    writer_pre = args.model
 
 tools_get_logger('train_G').info(f"pid {os.getpid()} using device {args.device} training on {args.dataset} with model {args.model} epoch {args.epoch} batch {args.batch}")
 
@@ -149,8 +152,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
 
-    save_dir = config_seq2seq.model_save_dir_fmt.format(args.model, start_time)
-    tools_copy_all_suffix_files(target_dir=f'{save_dir}pyfile/', source_dir='.', suffix='.py')
+    tools_copy_all_suffix_files(target_dir=f'{log_dir}/pyfile/', source_dir='.', suffix='.py')
 
     for ep in range(epoch_num):
         if ep >= 50 and ep % 10 == 0:
@@ -191,9 +193,9 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
 
         if config_train_generator.is_save_model:
+            save_dir = f'{log_dir}/model_state/'
             tools_make_dir(save_dir)
             save_path = f'{save_dir}epoch_{ep}_{tools_get_time()}.pt'
-
             torch.save(seq2seq.state_dict(), save_path)
             tools_get_logger('train').info(
                 f"epoch {ep} saving model {save_path}")
@@ -283,7 +285,7 @@ if __name__ == '__main__':
     seq2seq.eval()
 
 
-    writer, log_dir, start_time = tools_get_tensorboard_writer(dir_pre=f'pretrain_G_{args.model}')
+    writer, log_dir, start_time = tools_get_tensorboard_writer(dir_pre=writer_pre)
 
     train_generator_process(epoch_num=args.epoch,
                             batch_size=args.batch,

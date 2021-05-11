@@ -225,68 +225,98 @@ def evaluate_diversity_res(predictions_dir):
 
     return best_ep, best_div1, best_div2
 
+def evaluate_novelty_res(predictions_dir):
+    from data import read_acl_origin_data
+    from config import config_zhihu_dataset, config_concepnet
+    metric = MetricGenerator()
+    word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (
+        test_essay, test_topic, test_mem) \
+        = read_acl_origin_data()
+    train_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
+                                  topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                  vocab_size=config_zhihu_dataset.vocab_size,
+                                  essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                  prior=None, encode_to_tensor=True,
+                                  mem_corpus_path=config_concepnet.memory_corpus_path,
+                                  acl_datas=(word2idx, idx2word, topic2idx, idx2topic,
+                                             (train_essay, train_topic, train_mem)))
+    train_dataset.print_info()
+    test_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
+                                 topic_num_limit=config_zhihu_dataset.topic_num_limit,
+                                 topic_padding_num=config_zhihu_dataset.topic_padding_num,
+                                 vocab_size=config_zhihu_dataset.vocab_size,
+                                 essay_padding_len=config_zhihu_dataset.essay_padding_len,
+                                 prior=None, encode_to_tensor=True,
+                                 mem_corpus_path=config_concepnet.memory_corpus_path,
+                                 acl_datas=(word2idx, idx2word, topic2idx, idx2topic,
+                                            (test_essay, test_topic, test_mem)))
+    test_dataset.print_info()
+    source_list = []
+    for si in test_dataset.data_topics:
+        if isinstance(si, torch.Tensor):
+            si = si.tolist()
+        source_list.append(test_dataset.unpadded_idxs(si, end_token='<pad>'))
+
+    if len(metric.novelty_built_dict) == 0:
+        assert isinstance(train_dataset, ZHIHU_dataset)
+        train_topics = []
+        train_target_essays = []
+        for traint, tar in zip(train_dataset.data_topics, train_dataset.data_essays['target']):
+            train_target_essays.append(train_dataset.unpadded_idxs(tar.tolist(), end_token='<eos>'))
+            train_topics.append(train_dataset.unpadded_idxs(traint.tolist(), end_token='<eos>'))
+        metric.build_novelty_dict(source_list, train_topics, train_target_essays)
+
+    pat = "\d+"
+    res = []
+    best_ep, best_nove = -1, -1
+    for path in os.listdir(predictions_dir):
+        if path.startswith('epoch_'):
+            novelty_mean = 0.0
+            epoch = int(re.findall(pat, path)[0])
+            path = f"{predictions_dir}/{path}"
+            _, _, generated = tools_parse_log_file(path)
+            ggg = []
+            assert len(source_list) == len(generated)
+            for g in generated:
+                _, t, _ = train_dataset.convert_word2idx(g.split(' '))
+                t = train_dataset.unpadded_idxs(t)
+                ggg.append(t)
+            for t, g in zip(source_list, ggg):
+                novelty_mean += metric.novelty_evaluate(t, g)
+            novelty_mean /= len(ggg)
+            if novelty_mean > best_nove:
+                best_ep = epoch
+                best_nove = novelty_mean
+            res.append((epoch, novelty_mean))
+            print(res[-1], f'now best_epoch {best_ep} best_novelty {best_nove:.4f}')
+
+    writer = SummaryWriter(log_dir=predictions_dir)
+    res = sorted(res, key=lambda t: t[0])
+    for ep, novelty in res:
+        writer.add_scalar('Novelty', novelty, ep)
+
+    return res
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--dirpath', type=str, default=None)
+    parser.add_argument('--metric', type=str, help='choose [novelty | diversity]', default=None)
     args = parser.parse_args()
     assert args.dirpath
-    evaluate_diversity_res(args.dirpath)
+    assert args.metric
+    if args.metric == 'diversity':
+        evaluate_diversity_res(args.dirpath)
+    elif args.metric == 'novelty':
+        evaluate_novelty_res(args.dirpath)
+    else:
+        raise NotImplementedError(f"{args.metric} {args.dirpath} not supported")
 
-
-    # _, _, generated = tools_parse_log_file(path)
-    # metric = MetricGenerator()
-    # print(metric.div_distinct(generated))
 
 
     pass
-    # from config import config_concepnet, config_zhihu_dataset, config_seq2seq
-    # from neural import KnowledgeEnhancedSeq2Seq, init_param
-    # from torch.utils.data import DataLoader
-    # from predict import prediction
-    #
-    # device = torch.device('cuda:0')
-    # load_path = ''
-    # train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
-    #                                   topic_num_limit=config_zhihu_dataset.topic_num_limit,
-    #                                   topic_padding_num=config_zhihu_dataset.topic_padding_num,
-    #                                   vocab_size=config_zhihu_dataset.vocab_size,
-    #                                   essay_padding_len=config_zhihu_dataset.essay_padding_len,
-    #                                   prior=None, encode_to_tensor=True,
-    #                                   mem_corpus_path=config_concepnet.memory_corpus_path)
-    # train_all_dataset.print_info()
-    # test_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.test_data_path,
-    #                                  topic_num_limit=config_zhihu_dataset.topic_num_limit,
-    #                                  topic_padding_num=config_zhihu_dataset.topic_padding_num,
-    #                                  vocab_size=config_zhihu_dataset.vocab_size,
-    #                                  essay_padding_len=config_zhihu_dataset.essay_padding_len,
-    #                                  mem_corpus_path=config_concepnet.memory_corpus_path,
-    #                                  prior=train_all_dataset.get_prior(), encode_to_tensor=True)
-    # test_all_dataset.print_info()
-    # test_all_dataloader = DataLoader(test_all_dataset, batch_size=128)
-    # # seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-    # #                                    embed_size=config_seq2seq.embedding_size,
-    # #                                    pretrained_wv_path=config_seq2seq.pretrained_wv_path['tencent'],
-    # #                                    encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-    # #                                    encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-    # #                                    lstm_layer=config_seq2seq.lstm_layer_num,
-    # #                                    attention_size=config_seq2seq.attention_size,
-    # #                                    device=device)
-    # # init_param(seq2seq, init_way='normal')
-    # # seq2seq = seq2seq.to(device)
-    # # seq2seq.eval()
-    # #
-    # metric = MetricGenerator()
-    # # dataset_type = 'test'
-    # # predicts_samples_idxs = prediction(seq2seq, train_all_dataset, test_all_dataloader, device, None)
-    # gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty_mean = metric.value(test_all_dataset.data_essays['target'], test_all_dataset,
-    #                                                                       train_all_dataset, dataset_type='test')
-    #
-    # print(f'evaluate done on test!\n'
-    #       f'gram2 {gram2:.4f} gram3 {gram3:.4f} gram4 {gram4:.4f}\n'
-    #       f'bleu2 {bleu2:.4f} bleu3 {bleu3:.4f} bleu4 {bleu4:.4f}\n'
-    #       f'novelty_mean {novelty_mean:.4f}')
+
 
 
 

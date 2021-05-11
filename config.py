@@ -3,24 +3,13 @@ class config_train_public:
     device_name = 'cuda:3'
     dataloader_num_workers = 4
 
-class config_train_discriminator:
-    generate_batch_num = 256
-    generate_batch_size = 256 # num all is generate_batch_num * generate_batch_size
-    batch_size = 128
-    epoch = 50
-    label_smooth = 0.9
-    label_eps = 0.1
-    learning_rate = 1e-3
-    test_data_split_ratio = 1 / 6
-    is_save_model = False
-
 class config_train_generator:
     epoch = 150
     batch_size = 64
     learning_rate = 1e-3
     is_save_model = True
     grad_clip_norm_type = 2.0
-    grad_clip_max_norm = 10.0
+    grad_clip_max_norm = 1.5
     model_init_way = 'noraml'
     evaluate_log_format = 'epoch {:03d} train_loss {:.4f} test_loss {:.4f} novelty {:.4f}\n' \
                           'div1 {:.4f} div2 {:.4f} bleu2 {:.4f} bleu3 {:.4f} bleu4 {:.4f}\n' \
@@ -61,9 +50,7 @@ class config_zhihu_dataset:
     preprocess_essay_min_len = essay_padding_len // 1.8
 
 
-
 class config_seq2seq:
-    model_save_dir_fmt = './saved_model/{}/{}/'
     model_load_path = None
     encoder_lstm_hidden_size = 512
     encoder_lstm_is_bid = True
@@ -80,9 +67,18 @@ class config_seq2seq:
     }
 
 class config_wordcnn:
-    model_save_fmt = './saved_model/wordcnn/{}/epoch_{}_train_acc_{:.5f}.pt'
     model_load_path = None
     embed_size = 64
     channel_nums = [128, 256, 256, 256, 256, 128, 128, 128, 256]
     kernel_sizes = [1, 2, 3, 4, 5, 10, 30, 60, 80]
 
+class config_train_discriminator:
+    generate_batch_num = 256
+    generate_batch_size = 256 # num all is generate_batch_num * generate_batch_size
+    batch_size = 128
+    epoch = 50
+    label_smooth = 0.9
+    label_eps = 0.1
+    learning_rate = 1e-3
+    test_data_split_ratio = 1 / 6
+    is_save_model = False

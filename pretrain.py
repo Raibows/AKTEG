@@ -46,7 +46,8 @@ def pretrain_process(train_all_dataset, seq2seq, writer_logdir_starttime, epoch_
     writer, log_dir, start_time = writer_logdir_starttime
     print_interval = len(dataloader) // 5
     begin_teacher_force_ratio = 1.0
-    save_dir = f"./saved_model/pretrain_seq2seq/{args.model}/{start_time}/"
+    tools_copy_all_suffix_files(target_dir=f'{log_dir}/pyfile/', source_dir='.', suffix='.py')
+
     best_save_loss = 1e10
     best_save_path = None
 
@@ -78,13 +79,12 @@ def pretrain_process(train_all_dataset, seq2seq, writer_logdir_starttime, epoch_
 
         loss_mean /= len(dataloader)
         scheduler.step(loss_mean, epoch=ep)
-        writer.add_scalar('pretrainSeq2Seq/train_loss', loss_mean, ep)
+        writer.add_scalar(f'pretrain_seq2seq_{args.model}/train_loss', loss_mean, ep)
 
         if loss_mean < best_save_loss:
-            if best_save_path == None:
-                tools_copy_all_suffix_files(target_dir=f'{save_dir}pyfile/', source_dir='.', suffix='.py')
-                tools_make_dir(save_dir)
             best_save_loss = loss_mean
+            save_dir = f"{log_dir}/model_state/"
+            tools_make_dir(save_dir)
             best_save_path = f"{save_dir}epoch_{ep}_loss_{loss_mean:.4f}.pt"
             torch.save(seq2seq.state_dict(), best_save_path)
 
