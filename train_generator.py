@@ -148,7 +148,9 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     warmup_epoch = -1
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
-    save_py_file = False
+
+    save_dir = config_seq2seq.model_save_dir_fmt.format(args.model, start_time)
+    tools_copy_all_suffix_files(target_dir=f'{save_dir}pyfile/', source_dir='.', suffix='.py')
 
     for ep in range(epoch_num):
         if ep >= 50 and ep % 10 == 0:
@@ -189,12 +191,9 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
 
         if config_train_generator.is_save_model:
-            save_dir = config_seq2seq.model_save_dir_fmt.format(args.model, start_time)
             tools_make_dir(save_dir)
             save_path = f'{save_dir}epoch_{ep}_{tools_get_time()}.pt'
-            if save_py_file == False:
-                save_py_file = True
-                tools_copy_all_suffix_files(target_dir=f'{save_dir}pyfile/', source_dir='.', suffix='.py')
+
             torch.save(seq2seq.state_dict(), save_path)
             tools_get_logger('train').info(
                 f"epoch {ep} saving model {save_path}")
