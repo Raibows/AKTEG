@@ -41,9 +41,9 @@ def read_zhihu_dataset(path, pre=True):
             for i, line in enumerate(file):
                 line = line.strip('\n').strip('\r').split('</d>')
                 # process the essay
-                essays.append(line[0].split(' '))
+                essays.append(line[0].strip().split(' '))
                 # process the topics
-                topics.append(line[1].split(' '))
+                topics.append(line[1].strip().split(' '))
 
     return essays, topics
 
@@ -58,20 +58,23 @@ def read_coco_dataset(path):
             topics.append(line)
     return essays, topics
 
-def read_acl_origin_data():
+def read_acl_origin_data(is_expand=False):
     load_path = {
-        'train': './zhihu_dataset/acl_data/train.std.txt',
-        'test': './zhihu_dataset/acl_data/test.std.txt',
-        'valid': './zhihu_dataset/acl_data/valid.std.txt'
+        'train': './zhihu_dataset/acl_data/minimal/train.std.txt',
+        'test': './zhihu_dataset/acl_data/minimal/test.std.txt',
+        'valid': './zhihu_dataset/acl_data/minimal/valid.std.txt'
     }
     config = {
-        "word_dict": "./zhihu_dataset/acl_data/word_dict_zhihu.npy",
-        "pretrain_wv": "./zhihu_dataset/acl_data/wv_tencent.npy",
-        "topic_list": "./zhihu_dataset/acl_data/topic_list_100.pkl",
-        'train_mem': "./zhihu_dataset/acl_data/train_mem_idx_120_concept.npy",
-        'test_mem': "./zhihu_dataset/acl_data/tst.mem.idx.120.concept.npy",
-        'topic_list': './zhihu_dataset/acl_data/topic_list_100.pkl',
+        "word_dict": "./zhihu_dataset/acl_data/minimal/word_dict_zhihu.npy",
+        "pretrain_wv": "./zhihu_dataset/acl_data/minimal/wv_tencent.npy",
+        "topic_list": "./zhihu_dataset/acl_data/minimal/topic_list_100.pkl",
+        'train_mem': "./zhihu_dataset/acl_data/minimal/train_mem_idx_120_concept.npy",
+        'test_mem': "./zhihu_dataset/acl_data/minimal/tst.mem.idx.120.concept.npy",
+        'topic_list': './zhihu_dataset/acl_data/minimal/topic_list_100.pkl',
     }
+    if is_expand:
+        load_path['train'] = './zhihu_dataset/acl_data/minimal/train_expand.std.txt'
+        config['train_mem'] = './zhihu_dataset/acl_data/minimal/train_expand_mem_idx_120_concept.npy'
     word2idx = np.load(config['word_dict'], allow_pickle=True).item()
     special = config_zhihu_dataset.special_tokens
     for key in special:

@@ -1,3 +1,5 @@
+import copy
+import random
 
 
 def read_line_like_file(path):
@@ -6,8 +8,8 @@ def read_line_like_file(path):
 
 def write_line_like_file(path, datas):
     with open(path, 'w', encoding='utf-8') as file:
-        file.writelines(datas)
-
+        for data in datas:
+            file.write(f'{data}\n')
 def split_line_like_datas(datas, split_ratio):
     import random
     from tools import tools_setup_seed
@@ -167,7 +169,6 @@ def build_commonsense_memory():
 
     tools_save_pickle_obj(topic_memory_corpus, cc.memory_corpus_path)
 
-
 def split_train_test_set():
     from data import ZHIHU_dataset
     from config import config_zhihu_dataset
@@ -223,6 +224,72 @@ def preprocess_concepnet():
     # {word: [syn1, syn2, syn3...], word2: [...]}
     tools_save_pickle_obj(reserved, c.reserved_data_path)
 
+def data_augmentation(expand_scale=10, synonym_cand_num=20, max_sub_rate=0.25):
+    from data import read_acl_origin_data
+    from tools import tools_setup_seed, tools_get_logger, tools_save_pickle_obj, tools_load_pickle_obj
+    from tqdm import tqdm
+    import numpy as np
+
+    tools_setup_seed(667)
+    word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (
+    test_essay, test_topic, test_mem) = read_acl_origin_data()
+    train_mem = list(train_mem)
+
+    # import synonyms
+    # synonym_dict = {}
+    # tools_get_logger('expand').info('start building synonym dict')
+    # for k, v in tqdm(word2idx.items()):
+    #     synonym_dict[k] = set()
+    #     for temp in synonyms.nearby(k, synonym_cand_num * 3)[0]:
+    #         if temp in word2idx: synonym_dict[k].add(temp)
+
+    # tools_save_pickle_obj(synonym_dict, './zhihu_dataset/acl_data/vocab.synonym.dict.pkl')
+    synonym_dict = tools_load_pickle_obj('./zhihu_dataset/acl_data/vocab.synonym.dict.pkl')
+
+    tools_get_logger('expand').info('start expanding datas')
+    for i in tqdm(range(len(train_essay))):
+        es, tp, mem = train_essay[i], train_topic[i], train_mem[i]
+        es_len = len(es)
+        max_limit = int(es_len * max_sub_rate)
+        temp = [j for j in range(es_len)]
+        for _ in range(expand_scale):
+            limit = max(3, int(max_limit * random.random()))
+            replaced = set()
+            loop = 0
+            count = 0
+            cand = copy.copy(es)
+            while count < limit and loop < 5:
+                loop += 1
+                pos = random.sample(temp, limit - count)
+                for p in pos:
+                    if count == limit: break
+                    if p in replaced: continue
+                    ori_word = es[p]
+                    if ori_word not in word2idx: continue
+                    res = synonym_dict[ori_word]
+                    if len(res) > 0:
+                        s = random.sample(res, 1)[0]
+                        cand[p] = s
+                        count += 1
+                        replaced.add(p)
+            if len(replaced) > 0:
+                train_essay.append(cand)
+                train_topic.append(tp)
+                train_mem.append(mem)
+
+    tools_get_logger('expand').info(f'expanding done! now train data num is {len(train_essay)}')
+    train_datas = []
+    for es, tp in zip(train_essay, train_topic):
+        es = ' '.join(es)
+        tp = ' '.join(tp)
+        train_datas.append(f"{es} </d> {tp}")
+
+
+
+    write_line_like_file('./zhihu_dataset/acl_data/train_expand.std.txt', train_datas)
+    np.save('./zhihu_dataset/acl_data/train_expand_mem_idx_120_concept.npy', np.array(train_mem, dtype=np.int))
+
+
 
 
 
@@ -230,6 +297,9 @@ def preprocess_concepnet():
 if __name__ == '__main__':
     # split_train_test_set()
     # build_commonsense_memory()
-    generate_pretrained_wv()
+    # generate_pretrained_wv()
     # preprocess_concepnet()
+
+    data_augmentation()
+
     pass

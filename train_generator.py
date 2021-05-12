@@ -18,7 +18,7 @@ from metric import MetricGenerator
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic]', default='knowledge')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
-parser.add_argument('--dataset', type=str, help='chosse from [origin | acl]', default='origin')
+parser.add_argument('--dataset', type=str, help='chosse from [origin | acl | expand]', default='origin')
 parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch', const=config_train_generator.epoch, nargs='?')
 parser.add_argument('--batch', type=int, help='batch size default is config_batch', const=config_train_generator.batch_size, nargs='?')
 parser.add_argument('--load', type=str, help='load the pretrained model', nargs='?', const=None)
@@ -155,9 +155,6 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     tools_copy_all_suffix_files(target_dir=f'{log_dir}/pyfile/', source_dir='.', suffix='.py')
 
     for ep in range(epoch_num):
-        if ep >= 50 and ep % 10 == 0:
-            begin_teacher_force_ratio *= 0.95
-            begin_teacher_force_ratio = max(begin_teacher_force_ratio, 0.75)
         train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
                                            optimizer, criterion, begin_teacher_force_ratio)
 
@@ -192,7 +189,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
-        if config_train_generator.is_save_model:
+        if config_train_generator.is_save_model and ep >= 30:
             save_dir = f'{log_dir}/model_state/'
             tools_make_dir(save_dir)
             save_path = f'{save_dir}epoch_{ep}_{tools_get_time()}.pt'
@@ -221,10 +218,11 @@ if __name__ == '__main__':
                                          mem_corpus_path=config_concepnet.memory_corpus_path,
                                          prior=train_all_dataset.get_prior(), encode_to_tensor=True)
         test_all_dataset.print_info()
-    elif args.dataset == 'acl':
+    elif args.dataset == 'acl' or args.dataset == 'expand':
         word2idx, idx2word, topic2idx, idx2topic, (train_essay, train_topic, train_mem), (
         test_essay, test_topic, test_mem) \
-            = read_acl_origin_data()
+            = read_acl_origin_data(is_expand=args.dataset == 'expand')
+        args.dataset = 'acl'
         train_all_dataset = ZHIHU_dataset(path=config_zhihu_dataset.train_data_path,
                                           topic_num_limit=config_zhihu_dataset.topic_num_limit,
                                           topic_padding_num=config_zhihu_dataset.topic_padding_num,
