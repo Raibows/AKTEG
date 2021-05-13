@@ -324,8 +324,11 @@ class Knowledge_v3(nn.Module):
         self.mem_attention = MultiHeadAttentionLayer(enc_out_size, embed_size, 4, 0.5, device)
         self.res_mem_attention = MultiHeadAttentionLayer(dec_hid_size, embed_size, 4, 0.5, device)
         self.attn_mem_layer_norm = nn.LayerNorm(embed_size)
+        self.mem_encoder = nn.LSTM(embed_size, 512, bidirectional=False, num_layers=1, batch_first=True)
+        self.mem_encoder_hidden = None
         self.step_embeddings = None
         self.dropout = nn.Dropout(0.5)
+        self.device = device
 
     def forward(self, dec_hidden, topic_enc_outs, topic_mask, mem_mask):
         # dec_hidden [batch, 1, dec_hidden_size]
@@ -336,21 +339,23 @@ class Knowledge_v3(nn.Module):
         attn_res_mem, _ = self.res_mem_attention.forward(dec_hidden, self.step_embeddings, self.step_embeddings, mask=mem_mask)
 
         attn_mem = attn_res_mem + self.dropout(attn_mem)
-        attn_mem = self.attn_mem_layer_norm.forward(attn_mem)
+        attn_mem = self.attn_mem_layer_norm.forward(attn_mem) # [batch, 1, embed_size]
 
-        # energy_mem = self.mem_attention.forward(self.step_embeddings, attn_t)
-        # attn_mem = self.step_embeddings.permute(0, 2, 1) @ energy_mem
+        attn_mem_outs, self.mem_encoder_hidden = self.mem_encoder.forward(attn_mem, self.mem_encoder_hidden)
 
-        # feeds = torch.cat([dec_embedings, attn_mem.permute(0, 2, 1)], dim=-1)
-
-        return attn_mem # [batch, 1, embed_size + embed_size]
+        return attn_mem_outs
 
     def clear_step_embeddings(self):
         self.step_embeddings = None
+        self.mem_encoder_hidden = None
 
     def init_step_embeddings(self, mem_embeddings):
         # [batch, max_mem_num, embed_size]
+        batch = mem_embeddings.shape[0]
         self.step_embeddings = mem_embeddings.detach()
+        self.mem_encoder_hidden = (torch.zeros([1, batch, 512], device=self.device, dtype=torch.float),
+                                   torch.zeros([1, batch, 512], device=self.device, dtype=torch.float))
+
 
 class Encoder_LSTM(nn.Module):
     def __init__(self, embed_size, hidden_size, is_bid):
@@ -379,7 +384,6 @@ class Encoder_LSTM(nn.Module):
         #
         outs = outs.index_select(0, idx_reverse)
         outs_fw, outs_bw = outs.split(outs.size(-1) // 2, dim=-1)
-        # todo fw + bw
         outs = outs_fw + outs_bw
         h, c = h.index_select(1, idx_reverse), c.index_select(1, idx_reverse)
         h, c = h.view(1, self.direction, h.size(1), -1), c.view(1, self.direction, c.size(1), -1)# [layer, direction, batch, -1]
@@ -395,10 +399,12 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
         super(KnowledgeTransformerSeq2Seqv3, self).__init__()
         self.encoder = Encoder_LSTM(embed_size, 512, is_bid=True)
         self.decoder_hidden_size = self.encoder.h_c_size
-        self.feed_to_decoder_size = embed_size + embed_size
+        self.feed_to_decoder_size = embed_size + 512
         self.decoder = nn.LSTM(self.feed_to_decoder_size, self.decoder_hidden_size, num_layers=1, batch_first=True)
         self.knowledge = Knowledge_v3(embed_size, self.decoder_hidden_size, self.encoder.h_c_size, device)
-        self.fc_out = nn.Linear(self.decoder_hidden_size, vocab_size)
+        self.fc_cat = nn.Linear(self.decoder_hidden_size + 512, vocab_size)
+        self.fc_hidden = nn.Linear(self.decoder_hidden_size, vocab_size)
+        self.gate = nn.Linear(self.decoder_hidden_size+512, vocab_size)
         self.embedding_layer = nn.Embedding(vocab_size, embed_size)
         self.dropout = nn.Dropout(0.5)
         self.pretrained_wv_path = pretrained_wv_path
@@ -428,11 +434,27 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
             now_embed = self.forward_only_embedding_layer(t_i)
             now_embed = t_w.unsqueeze(1) @ now_embed
 
-        attn_mem = self.knowledge.forward(dec_hidden.permute(1, 0, 2), enc_outs, topic_mask, mem_mask)
+        attn_outs = self.knowledge.forward(dec_hidden.permute(1, 0, 2), enc_outs, topic_mask, mem_mask)
 
-        feeds = torch.cat([now_embed, attn_mem], dim=2)
 
-        return feeds
+
+        feeds = torch.cat([now_embed, attn_outs], dim=2)
+
+        return feeds, attn_outs.squeeze()
+
+    def get_logits(self, decoder_outs, attn_outs):
+        """
+        :param decoder_outs: [batch, hidden_size]
+        :param attn_outs: [batch, 512]
+        :return: logits [batch, vocab_size]
+        """
+        cat = torch.cat([decoder_outs, attn_outs], dim=-1)
+        logits_straight = self.fc_hidden.forward(self.dropout(decoder_outs))
+        logits_cat = self.fc_cat.forward(self.dropout(cat))
+        gate = torch.sigmoid(self.gate.forward(cat))
+        logits = gate * logits_cat + (1.0 - gate) * logits_straight
+
+        return logits
 
     def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force_ratio=0.5):
         batch, essay_pad_len = essay_input.shape
@@ -449,10 +471,10 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
 
         i = 0
         for i in range(1, max_essay_len):
-            feeds = self.before_feed_to_decoder(now_input, h, enc_outs, topic_mask, mem_mask)
+            feeds, attn_mem = self.before_feed_to_decoder(now_input, h, enc_outs, topic_mask, mem_mask)
             outs, (h, c) = self.decoder.forward(feeds, (h, c))
             outs = outs.squeeze()
-            logits = self.fc_out(outs) #[batch, vocab_size]
+            logits = self.get_logits(outs, attn_mem)
             decoder_outputs[:, i-1, :] = logits
 
             if random.random() < teacher_force_ratio:
@@ -461,10 +483,10 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
                 now_input = logits.argmax(dim=1)
             now_input = now_input.unsqueeze(1)
 
-        feeds = self.before_feed_to_decoder(now_input, h, enc_outs, topic_mask, mem_mask)
+        feeds, attn_mem = self.before_feed_to_decoder(now_input, h, enc_outs, topic_mask, mem_mask)
         outs, _ = self.decoder.forward(feeds, (h, c))
         outs = outs.squeeze()
-        logits = self.fc_out(outs)
+        logits = self.get_logits(outs, attn_mem)
         decoder_outputs[:, i, :] = logits
         self.knowledge.clear_step_embeddings()
         return decoder_outputs
@@ -475,8 +497,8 @@ class KnowledgeTransformerSeq2Seqv3(nn.Module):
         # src_mask = [batch size, 1, 1, src len]
         return src_mask
 
-    # todo log.log removed the mem detach
-    # todo
+
+
 if __name__ == '__main__':
 
 
