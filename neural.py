@@ -329,28 +329,44 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         return decoder_outputs
 
 def init_param(self, init_way=None):
-    if init_way == 'uniform':
-        for param in self.parameters():
-            if param.requires_grad:
-                nn.init.uniform_(param.data, -0.08, 0.08)
-    elif init_way == 'xavier':
-        for param in self.parameters():
-            if param.requires_grad:
-                nn.init.xavier_normal(param.data)
-    elif init_way == 'noraml':
-        for param in self.parameters():
-            if param.requires_grad:
-                nn.init.normal_(param.data, mean=0.0, std=0.08)
-    elif init_way == 'kaiming':
-        for param in self.parameters():
-            if param.requires_grad:
-                nn.init.kaiming_uniform_(param.data, mode='fan_in', nonlinearity='relu')
+    if hasattr(self, 'init_parmas'):
+        self.init_parmas()
+    else:
+        if init_way == 'uniform':
+            for param in self.parameters():
+                if param.requires_grad:
+                    nn.init.uniform_(param.data, -0.08, 0.08)
+        elif init_way == 'xavier':
+            for param in self.parameters():
+                if param.requires_grad:
+                    nn.init.xavier_normal(param.data)
+        elif init_way == 'noraml':
+            for param in self.parameters():
+                if param.requires_grad:
+                    nn.init.normal_(param.data, mean=0.0, std=0.08)
+        elif init_way == 'kaiming':
+            for param in self.parameters():
+                if param.requires_grad:
+                    nn.init.kaiming_uniform_(param.data, mode='fan_in', nonlinearity='relu')
     if hasattr(self, 'embedding_layer') and hasattr(self, 'pretrained_wv_path'):
         if self.pretrained_wv_path:
-            self.embedding_layer.from_pretrained(torch.tensor(tools_load_pickle_obj(self.pretrained_wv_path), dtype=torch.float))
+            # severe bug finally found at 5/13 15:10
+            embeddings = torch.tensor(tools_load_pickle_obj(self.pretrained_wv_path))
+            self.embedding_layer = nn.Embedding.from_pretrained(embeddings)
         self.embedding_layer.weight.requires_grad = True
 
-
+def truncated_normal_(tensor, mean=0, std=1):
+    """
+    Implemented by @ruotianluo
+    See https://discuss.pytorch.org/t/implementing-truncated-normal-initializer/4778/15
+    """
+    size = tensor.shape
+    tmp = tensor.new_empty(size + (4,)).normal_()
+    valid = (tmp < 2) & (tmp > -2)
+    ind = valid.max(-1, keepdim=True)[1]
+    tensor.data.copy_(tmp.gather(-1, ind).squeeze(-1))
+    tensor.data.mul_(std).add_(mean)
+    return tensor
 
 
 
