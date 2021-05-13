@@ -11,12 +11,13 @@ from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time
     tools_setup_seed, tools_make_dir, tools_copy_all_suffix_files, tools_to_gpu, \
     tools_check_if_in_debug_mode, tools_write_log_to_file
 from transformer import KnowledgeTransformerSeq2Seqv3
+from cteg import CTEG_official
 from magic import MagicSeq2Seq
 from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
 from metric import MetricGenerator
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic]', default='knowledge')
+parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic|cteg]', default='cteg')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl | expand]', default='origin')
 parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch', const=config_train_generator.epoch, nargs='?')
@@ -271,6 +272,12 @@ if __name__ == '__main__':
                                encoder_bid=True,
                                lstm_layer=1,
                                device=device)
+    elif args.model == 'cteg':
+        seq2seq = CTEG_official(embed_size=200,
+                                hidden_size=512,
+                                vocab_size=len(train_all_dataset.word2idx),
+                                device=device,
+                                pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset])
     else:
         raise NotImplementedError(f'{args.model} not supported')
 
