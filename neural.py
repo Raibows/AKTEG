@@ -329,8 +329,8 @@ class KnowledgeEnhancedSeq2Seq(nn.Module):
         return decoder_outputs
 
 def init_param(self, init_way=None):
-    if hasattr(self, 'init_parmas'):
-        self.init_parmas()
+    if hasattr(self, 'init_params'):
+        self.init_params()
     else:
         if init_way == 'uniform':
             for param in self.parameters():

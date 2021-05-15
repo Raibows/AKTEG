@@ -24,7 +24,7 @@ parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch
 parser.add_argument('--batch', type=int, help='batch size default is config_batch', const=config_train_generator.batch_size, nargs='?')
 parser.add_argument('--load', type=str, help='load the pretrained model', nargs='?', const=None)
 args = parser.parse_args()
-if not args.device.startswith('cuda:'):
+if not args.device.startswith('cuda:') and args.device != 'cpu':
     args.device = config_train_public.device_name
 
 if tools_check_if_in_debug_mode():
@@ -68,7 +68,10 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
 @torch.no_grad()
 def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader, train_dataset,
                    seq2seq, criterion, prediction_path=None, dataset_type='test'):
-    seq2seq.eval()
+    if args.model == 'acl':
+        seq2seq.train()  # because acl use this
+    else:
+        seq2seq.eval()
     loss_mean = 0.0
     teacher_force_ratio = 0.0
     show_interval = len(dataset_loader) // 5
@@ -137,7 +140,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     metric = MetricGenerator()
     if args.load == None or args.model != 'transformer':
         # from scratch
-        optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+        optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
     else:
         # fine-tuning
         seq2seq.embedding_layer.weight.requires_grad = False
@@ -148,7 +151,8 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         ])
 
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epoch_num, eta_min=1e-9, last_epoch=-1, verbose=True)
     warmup_epoch = -1
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
     begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
@@ -165,7 +169,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                            seq2seq, criterion, prediction_path=prediction_path, dataset_type='test')
 
         if ep > warmup_epoch:
-            scheduler.step(gram2)
+            scheduler.step()
         else:
             warmup_scheduler.step()
 
