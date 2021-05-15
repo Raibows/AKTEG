@@ -1,6 +1,7 @@
 import random
 import torch
 import torch.nn as nn
+from utils import Attention
 
 
 class Encoder(nn.Module):
@@ -114,28 +115,6 @@ class Memory_neural(nn.Module):
         return m_t
 
 
-class Attention(nn.Module):
-    def __init__(self, enc_output_size, dec_hid_dim):
-        super(Attention, self).__init__()
-        self.attn = nn.Linear(enc_output_size + dec_hid_dim, dec_hid_dim)
-        self.v = nn.Linear(dec_hid_dim, 1, bias=False)
-
-    def forward(self, encoder_ouputs, dec_hidden, enc_mask=None):
-        # encoder_outputs [batch, topic_num, enc_output_size]
-        # dec_hidden [1, batch, dec_dim]
-        # enc_mask = [batch, topic_num, 1]
-        batch, topic_num, _ = encoder_ouputs.shape
-        dec_hidden = dec_hidden.squeeze().unsqueeze(1).repeat(1, topic_num, 1)  # [batch, topic_num, dec_dim]
-        energy = torch.cat([encoder_ouputs, dec_hidden], dim=2)
-        energy = torch.tanh(self.attn.forward(energy))
-        attention = self.v.forward(energy)  # [batch, topic_num, 1]
-        if enc_mask != None:
-            enc_mask = enc_mask.squeeze()[:, :topic_num]
-            attention = attention.masked_fill(enc_mask.unsqueeze(2) == False, -1e10)
-
-        return torch.softmax(attention, dim=1)
-
-
 class MagicSeq2Seq(nn.Module):
     def __init__(self, vocab_size, embed_size, pretrained_wv_path, encoder_lstm_hidden, encoder_bid,
                  lstm_layer, device):
@@ -186,13 +165,12 @@ class MagicSeq2Seq(nn.Module):
         # step_mem_embeddings
         # reshape embeddings to [batch, len, embed_size]
 
-    def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force_ratio=0.5):
+    def forward(self, topic, topic_len, essay_input, essay_len, mems, teacher_force=True):
 
         # topic_input [topic, topic_len]
         # topic [batch_size, seq_len]
         batch_size = topic.shape[0]
         essay_pad_len = essay_input.shape[1]
-        max_essay_len = torch.max(essay_len).item()
 
         decoder_outputs = torch.zeros([batch_size, essay_pad_len, self.vocab_size], device=self.device)
 
@@ -207,25 +185,27 @@ class MagicSeq2Seq(nn.Module):
 
         # first input token is <go>
         # if lstm layer > 1, then select the topmost layer lstm memory c[-1] and hidden h[-1]
-        now_input = essay_input[:, 0]
-        now_input_embeddings = self.forward_only_embedding_layer(now_input)
-        self.memory_neural.update_memory(now_input_embeddings)
-        now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                        topics_representations)
-        now_step = 0
-        for now_step in range(1, max_essay_len):
-            logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
-            decoder_outputs[:, now_step - 1] = logits
-            if random.random() < teacher_force_ratio:
-                now_input = essay_input[:, now_step]
-            else:
+
+        if teacher_force:
+            for i in range(essay_pad_len):
+                now_input = essay_input[:, i]
+                now_input_embeddings = self.forward_only_embedding_layer(now_input)
+                self.memory_neural.update_memory(now_input_embeddings)
+                now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1], topics_representations)
+                logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
+                decoder_outputs[:, i, :] = logits
+        else:
+            sos_pos = essay_input[0, 0]
+            logits = torch.zeros([batch_size, self.vocab_size], dtype=torch.float, device=self.device)
+            logits[torch.arange(batch_size), sos_pos] = 1.0
+            for i in range(essay_pad_len):
                 now_input = logits.argmax(dim=-1)
-            now_input_embeddings = self.forward_only_embedding_layer(now_input)
-            self.memory_neural.update_memory(now_input_embeddings)
-            now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1],
-                                                            topics_representations)
-        logits, _ = self.decoder.forward(now_decoder_input, h, c)
-        decoder_outputs[:, now_step] = logits
+                now_input_embeddings = self.forward_only_embedding_layer(now_input)
+                self.memory_neural.update_memory(now_input_embeddings)
+                now_decoder_input = self.before_feed_to_decoder(now_input_embeddings, h[-1], c[-1], topics_representations)
+                logits, (h, c) = self.decoder.forward(now_decoder_input, h, c)
+                decoder_outputs[:, i, :] = logits
+
         self.clear_memory_neural_step_state()
         # [batch, essay_len, essay_vocab_size]
         return decoder_outputs

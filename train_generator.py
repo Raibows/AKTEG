@@ -6,18 +6,15 @@ import random
 import argparse
 import os
 from data import ZHIHU_dataset, read_acl_origin_data
-from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
+from model_builder import build_model, activate_dropout_in_train_mode
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_all_suffix_files, tools_to_gpu, \
     tools_check_if_in_debug_mode, tools_write_log_to_file
-from transformer import KnowledgeTransformerSeq2Seqv3
-from cteg import CTEG_official
-from magic import MagicSeq2Seq
-from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
+from config import config_zhihu_dataset, config_train_generator, config_train_public, config_concepnet
 from metric import MetricGenerator
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, help='choose [simple|knowledge|attention|magic|cteg]', default='cteg')
+parser.add_argument('--model', type=str, help='choose [simple|paper|attention|magic|cteg]', default='cteg')
 parser.add_argument('--device', type=str, help='choose device name like cuda:0, 1, 2...', default=config_train_public.device_name)
 parser.add_argument('--dataset', type=str, help='chosse from [origin | acl | expand]', default='origin')
 parser.add_argument('--epoch', type=int, help='epoch num default is config_epoch', const=config_train_generator.epoch, nargs='?')
@@ -41,7 +38,7 @@ tools_get_logger('train_G').info(f"pid {os.getpid()} using device {args.device} 
 tools_setup_seed(667)
 device = torch.device(args.device)
 
-def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force_ratio):
+def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer, criterion, teacher_force):
     seq2seq.train()
     loss_mean = 0.0
     with tqdm(total=len(dataset_loader), desc=f'train{epoch}') as pbar:
@@ -50,7 +47,7 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
             topic, topic_len, mems, essay_input, essay_target, essay_len = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force=teacher_force)
             # [batch, essay_max_len, essay_vocab_size]
             logits = logits.view(-1, len(train_all_dataset.word2idx))
             optimizer.zero_grad()
@@ -68,12 +65,10 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
 @torch.no_grad()
 def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader, train_dataset,
                    seq2seq, criterion, prediction_path=None, dataset_type='test'):
-    if args.model == 'acl':
-        seq2seq.train()  # because acl use this
-    else:
-        seq2seq.eval()
+    seq2seq.eval()
+    seq2seq = activate_dropout_in_train_mode(seq2seq)
     loss_mean = 0.0
-    teacher_force_ratio = 0.0
+    teacher_force = False
     show_interval = len(dataset_loader) // 5
     predicts_set = []
     topics_set = []
@@ -86,7 +81,7 @@ def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_load
             topic, topic_len, mems, essay_input, essay_target, essay_len = \
                 tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=teacher_force_ratio)
+            logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force=teacher_force)
             # [batch, essay_len, vocab_size]
             if (i+1) % show_interval == 0:
                 sample = logits[random.randint(0, logits.shape[0]-1)]
@@ -138,30 +133,22 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                                    f"test/train {len(test_all_dataset) / len(train_all_dataset):.4f}")
 
     metric = MetricGenerator()
-    if args.load == None or args.model != 'transformer':
-        # from scratch
-        optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
-    else:
-        # fine-tuning
-        seq2seq.embedding_layer.weight.requires_grad = False
-        optimizer = optim.AdamW(lr=1e-3, params=[
-            {'params': seq2seq.encoder.parameters()},
-            {'params': seq2seq.knowledge.parameters(), 'lr': 7e-4},
-            {'params': seq2seq.decoder.parameters(), 'lr': 7e-4}
-        ])
+
+    # from scratch
+    optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+
 
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epoch_num, eta_min=1e-9, last_epoch=-1, verbose=True)
     warmup_epoch = -1
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
-    begin_teacher_force_ratio = config_seq2seq.teacher_force_rate
 
     tools_copy_all_suffix_files(target_dir=f'{log_dir}/pyfile/', source_dir='.', suffix='.py')
 
     for ep in range(epoch_num):
         train_loss = train_generator(ep, train_all_dataset, train_all_dataloader, seq2seq,
-                                           optimizer, criterion, begin_teacher_force_ratio)
+                                           optimizer, criterion, teacher_force=True)
 
         prediction_path = f'{log_dir}/epoch_{ep}.predictions'
         test_loss, gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = \
@@ -251,47 +238,11 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError(f'{args.dataset} not supported')
 
-    if args.model == 'knowledge':
-        seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                           embed_size=config_seq2seq.embedding_size,
-                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                           encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-                                           encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-                                           lstm_layer=config_seq2seq.lstm_layer_num,
-                                           attention_size=config_seq2seq.attention_size,
-                                           device=device)
-    elif args.model == 'simple':
-        seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
-    elif args.model == 'transformer':
-        seq2seq = KnowledgeTransformerSeq2Seqv3(vocab_size=len(train_all_dataset.word2idx),
-                                     embed_size=config_seq2seq.embedding_size,
-                                     pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                     device=device,
-                                     mask_idx=train_all_dataset.word2idx['<pad>'])
-    elif args.model == 'magic':
-        seq2seq = MagicSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                               embed_size=config_seq2seq.embedding_size,
-                               pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                               encoder_lstm_hidden=512,
-                               encoder_bid=True,
-                               lstm_layer=1,
-                               device=device)
-    elif args.model == 'cteg':
-        seq2seq = CTEG_official(embed_size=200,
-                                hidden_size=512,
-                                vocab_size=len(train_all_dataset.word2idx),
-                                device=device,
-                                pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset])
-    else:
-        raise NotImplementedError(f'{args.model} not supported')
 
-    init_param(seq2seq, init_way=config_train_generator.model_init_way)
-
-    if args.load:
-        tools_get_logger('train').info(f"loading pretrained model from {args.load}")
-        seq2seq.load_state_dict(torch.load(args.load, map_location=device))
-    seq2seq.to(device)
-    seq2seq.eval()
+    seq2seq = build_model(model_name=args.model, dataset_name=args.dataset,
+                          vocab_size=len(train_all_dataset.word2idx), device=device,
+                          load_path=args.load, init_way='normal',
+                          mask_idx=train_all_dataset.word2idx['<pad>'])
 
 
     writer, log_dir, start_time = tools_get_tensorboard_writer(dir_pre=writer_pre)

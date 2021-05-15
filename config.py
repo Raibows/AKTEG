@@ -57,7 +57,6 @@ class config_seq2seq:
     lstm_layer_num = 1
 
     attention_size = 128
-    teacher_force_rate = 1.0
 
     embedding_size = 200
     pretrained_wv_path = {
