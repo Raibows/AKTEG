@@ -4,12 +4,10 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 import random
 from data import ZHIHU_dataset, read_acl_origin_data
-from neural import KnowledgeEnhancedSeq2Seq, simple_seq2seq, init_param
+from model_builder import build_model, activate_dropout_in_train_mode
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_to_gpu, tools_batch_idx2words, tools_write_log_to_file
-from transformer import KnowledgeTransformerSeq2Seqv3
-from magic import MagicSeq2Seq
-from config import config_zhihu_dataset, config_train_generator, config_seq2seq, config_train_public, config_concepnet
+from config import config_zhihu_dataset, config_train_generator, config_train_public, config_concepnet
 from metric import MetricGenerator
 import argparse
 
@@ -18,7 +16,6 @@ import argparse
 
 @torch.no_grad()
 def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
-    seq2seq.eval()
     predicts_set = []
     topics_set = []
     original_essays_set = []
@@ -30,7 +27,7 @@ def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
         topic, topic_len, mems, essay_input, essay_target, essay_len = \
             tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-        logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=0.0)
+        logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=False)
         # [batch, essay_len, vocab_size]
         predicts = logits.argmax(dim=-1)
         predicts_set.extend(predicts.tolist())
@@ -117,36 +114,10 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError(f'{args.dataset} not supported')
 
-    if args.model == 'knowledge':
-        seq2seq = KnowledgeEnhancedSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                                           embed_size=config_seq2seq.embedding_size,
-                                           pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                           encoder_lstm_hidden=config_seq2seq.encoder_lstm_hidden_size,
-                                           encoder_bid=config_seq2seq.encoder_lstm_is_bid,
-                                           lstm_layer=config_seq2seq.lstm_layer_num,
-                                           attention_size=config_seq2seq.attention_size,
-                                           device=device)
-    elif args.model == 'simple':
-        seq2seq = simple_seq2seq(2, 128, len(train_all_dataset.word2idx), 128, device)
-    elif args.model == 'transformer':
-        seq2seq = KnowledgeTransformerSeq2Seqv3(vocab_size=len(train_all_dataset.word2idx),
-                                     embed_size=config_seq2seq.embedding_size,
-                                     pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                                     device=device,
-                                     mask_idx=train_all_dataset.word2idx['<pad>'])
-    elif args.model == 'magic':
-        seq2seq = MagicSeq2Seq(vocab_size=len(train_all_dataset.word2idx),
-                               embed_size=config_seq2seq.embedding_size,
-                               pretrained_wv_path=config_seq2seq.pretrained_wv_path[args.dataset],
-                               encoder_lstm_hidden=512,
-                               encoder_bid=True,
-                               lstm_layer=1,
-                               device=device)
-    else:
-        raise NotImplementedError(f'{args.model} not supported')
-
-    seq2seq.load_state_dict(torch.load(args.load, map_location=device))
-    seq2seq.to(device)
+    seq2seq = build_model(model_name=args.model, dataset_name=args.dataset,
+                          vocab_size=len(train_all_dataset.word2idx), device=device,
+                          load_path=args.load, init_way='normal',
+                          mask_idx=train_all_dataset.word2idx['<pad>'])
     seq2seq.eval()
-
+    seq2seq = activate_dropout_in_train_mode(seq2seq)
     prediction(seq2seq, train_all_dataset, test_all_dataset, device, res_path=args.result)

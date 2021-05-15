@@ -45,10 +45,10 @@ def build_model(model_name, dataset_name, vocab_size, device, load_path=None, in
     else:
         raise NotImplementedError(f'{model_name} not supported')
 
-    init_param(seq2seq, init_way=init_way)
-
     if load_path:
         seq2seq.load_state_dict(torch.load(load_path, map_location=device))
+    else:
+        init_param(seq2seq, init_way=init_way)
     seq2seq.to(device)
     seq2seq.eval()
     tools_get_logger('model_builder').info(f"loading pretrained {model_name} from {load_path}")
