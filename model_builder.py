@@ -59,6 +59,7 @@ def build_model(model_name, dataset_name, vocab_size, device, load_path=None, in
 def activate_dropout_in_train_mode(seq2seq:torch.nn.Module):
     seq2seq.eval()
     for m in seq2seq.modules():
+        # print(m.__class__.__name__.lower())
         if m.__class__.__name__.lower().startswith('dropout'):
             m.train()
     return seq2seq

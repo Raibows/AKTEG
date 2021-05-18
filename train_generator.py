@@ -9,7 +9,7 @@ from data import ZHIHU_dataset, read_acl_origin_data
 from model_builder import build_model, activate_dropout_in_train_mode
 from tools import tools_get_logger, tools_get_tensorboard_writer, tools_get_time, \
     tools_setup_seed, tools_make_dir, tools_copy_all_suffix_files, tools_to_gpu, \
-    tools_check_if_in_debug_mode, tools_write_log_to_file
+    tools_check_if_in_debug_mode, tools_write_log_to_file, tools_batch_idx2words
 from config import config_zhihu_dataset, config_train_generator, config_train_public, config_concepnet
 from metric import MetricGenerator
 
@@ -135,12 +135,12 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
     metric = MetricGenerator()
 
     # from scratch
-    optimizer = optim.Adam(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
 
 
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epoch_num, eta_min=1e-9, last_epoch=-1, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.95, patience=5, min_lr=9e-5, verbose=True)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epoch_num, eta_min=1e-9, last_epoch=-1, verbose=True)
     warmup_epoch = -1
     warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda ep: 1e-2 if ep < warmup_epoch else 1.0)
 
@@ -156,7 +156,8 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
                            seq2seq, criterion, prediction_path=prediction_path, dataset_type='test')
 
         if ep > warmup_epoch:
-            scheduler.step()
+            scheduler.step(gram2)
+            # scheduler.step()
         else:
             warmup_scheduler.step()
 

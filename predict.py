@@ -27,7 +27,7 @@ def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
         topic, topic_len, mems, essay_input, essay_target, essay_len = \
             tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
-        logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force_ratio=False)
+        logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force=False)
         # [batch, essay_len, vocab_size]
         predicts = logits.argmax(dim=-1)
         predicts_set.extend(predicts.tolist())

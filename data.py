@@ -67,7 +67,6 @@ def read_acl_origin_data(is_expand=False):
     config = {
         "word_dict": "./zhihu_dataset/acl_data/minimal/word_dict_zhihu.npy",
         "pretrain_wv": "./zhihu_dataset/acl_data/minimal/wv_tencent.npy",
-        "topic_list": "./zhihu_dataset/acl_data/minimal/topic_list_100.pkl",
         'train_mem': "./zhihu_dataset/acl_data/minimal/train_mem_idx_120_concept.npy",
         'test_mem': "./zhihu_dataset/acl_data/minimal/tst.mem.idx.120.concept.npy",
         'topic_list': './zhihu_dataset/acl_data/minimal/topic_list_100.pkl',
