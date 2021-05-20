@@ -39,11 +39,14 @@ def tools_setup_seed(seed):
     import torch
     import numpy as np
     import random
+    import os
+    os.environ['PYTHONHASHSEED'] = str(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
     tools_get_logger('tools').info(f"set the seed to {seed}")
 
 def tools_make_dir(path):
