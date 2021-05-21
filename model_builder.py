@@ -6,6 +6,7 @@ from magic import MagicSeq2Seq
 from config import config_seq2seq
 from tools import tools_get_logger
 import torch
+from torch import nn
 
 def build_model(model_name, dataset_name, vocab_size, device, load_path=None, init_way=None, mask_idx=None):
     
@@ -45,8 +46,20 @@ def build_model(model_name, dataset_name, vocab_size, device, load_path=None, in
     else:
         raise NotImplementedError(f'{model_name} not supported')
 
+    seq2seq.to(torch.device('cpu'))
     if load_path:
-        seq2seq.load_state_dict(torch.load(load_path, map_location=device))
+        loaded = torch.load(load_path, map_location=torch.device('cpu'))
+        seq2seq_dict = seq2seq.state_dict()
+        for name, param in loaded.items():
+            if name not in seq2seq_dict:
+                continue
+            if isinstance(param, nn.Parameter):
+                param = param.data
+            if param.shape != seq2seq_dict[name].shape:
+                continue
+            seq2seq_dict[name].copy_(param)
+            tools_get_logger('model_builder').info(f'{name} loaded')
+        # seq2seq.load_state_dict(torch.load(load_path, map_location=device))
     else:
         init_param(seq2seq, init_way=init_way)
     seq2seq.to(device)

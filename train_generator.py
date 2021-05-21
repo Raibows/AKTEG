@@ -66,7 +66,7 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
 def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader, train_dataset,
                    seq2seq, criterion, prediction_path=None, dataset_type='test'):
     seq2seq.eval()
-    seq2seq = activate_dropout_in_train_mode(seq2seq)
+    # seq2seq = activate_dropout_in_train_mode(seq2seq)
     loss_mean = 0.0
     teacher_force = False
     show_interval = len(dataset_loader) // 5
@@ -134,8 +134,20 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
 
     metric = MetricGenerator()
 
-    # from scratch
-    optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
+    if args.load:
+        optim_params = [
+            {'params': seq2seq.encoder.parameters(), 'lr': 3e-5},
+            {'params': seq2seq.embedding_layer.parameters(), 'lr': 1e-5},
+            {'params': seq2seq.decoder.parameters(), 'lr': 3e-5},
+            {'params': seq2seq.knowledge.parameters()},
+            {'params': seq2seq.fc_cat.parameters()},
+            {'params': seq2seq.fc_hidden.parameters()},
+            {'params': seq2seq.gate.parameters()}
+        ]
+        optimizer = optim.AdamW(lr=config_train_generator.learning_rate, params=optim_params)
+    else:
+        # from scratch
+        optimizer = optim.AdamW(seq2seq.parameters(), lr=config_train_generator.learning_rate)
 
 
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
@@ -169,7 +181,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         writer.add_scalar('Diversity/gram1', div1, ep)
         writer.add_scalar('Diversity/gram2', div2, ep)
 
-        evaluate_print = f'train_loss {train_loss:.4f} test_loss {test_loss:.4f}\n' \
+        evaluate_print = f'\n epoch {ep} train_loss {train_loss:.4f} test_loss {test_loss:.4f}\n' \
                          f'bleu2 {gram2:.4f} bleu3 {gram3:.4f} bleu4 {gram4:.4f}\n' \
                          f'novelty {novelty:.4f} div1 {div1:.4f} div2 {div2:.4f}\n' \
                          f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n'
@@ -182,7 +194,7 @@ def train_generator_process(epoch_num, train_all_dataset, test_all_dataset, seq2
         tools_write_log_to_file(config_train_generator.evaluate_log_format, evaluate_summary, f'{log_dir}/evaluate.log')
 
 
-        if config_train_generator.is_save_model and ep >= 30:
+        if config_train_generator.is_save_model:
             save_dir = f'{log_dir}/model_state/'
             tools_make_dir(save_dir)
             save_path = f'{save_dir}epoch_{ep}_{tools_get_time()}.pt'
