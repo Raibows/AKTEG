@@ -7,7 +7,7 @@ from transformer import MultiHeadAttentionLayer
 class Knowledge_v3(nn.Module):
     def __init__(self, embed_size, dec_hid_size, enc_out_size, device):
         super(Knowledge_v3, self).__init__()
-        self.mem_attention = MultiHeadAttentionLayer(dec_hid_size, embed_size, 4, 0.5, device)
+        self.mem_attention = MultiHeadAttentionLayer(dec_hid_size, embed_size, 2, 0.5, device)
         self.knowledge = None
         self.output_size = embed_size
 

@@ -66,7 +66,7 @@ def train_generator(epoch, train_all_dataset, dataset_loader, seq2seq, optimizer
 def test_generator(epoch, metric:MetricGenerator, test_all_dataset, dataset_loader, train_dataset,
                    seq2seq, criterion, prediction_path=None, dataset_type='test'):
     seq2seq.eval()
-    # seq2seq = activate_dropout_in_train_mode(seq2seq)
+    seq2seq = activate_dropout_in_train_mode(seq2seq)
     loss_mean = 0.0
     teacher_force = False
     show_interval = len(dataset_loader) // 5

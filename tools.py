@@ -1,4 +1,5 @@
 import logging
+import re
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
@@ -117,14 +118,57 @@ def tools_parse_log_file(path):
     # topic, target, generated
     return res[0], res[1], res[2]
 
+def tools_parse_eval_file(path):
+    """
+    epoch 000 train_loss 7.2052 test_loss 7.0217 novelty 0.8735
+    div1 0.0008 div2 0.0040 bleu2 0.0231 bleu3 0.0023 bleu4 0.0016
+    mixbleu2 0.0615 mixbleu3 0.0182 mixbleu4 0.0093
+    -------
+    :param path:
+    :return:
+    """
+    train_loss, _, novelty = [], None, []
+    div1, div2, bleu2, _, _ = [], [], [], None, None
+    _, _, mixbleu4 = None, None, []
+    with open(path, 'r', encoding='utf-8') as file:
+        t = 0
+        pat = '\d{1}\.\d+'
+        for i, line in enumerate(file):
+            if (i+1) % 4 == 0:
+                t = 0
+                continue
+            t += 1
+            line = line.strip('\n').strip()
+            res = re.findall(pat, line)
+            res = list(map(lambda x: float(x), res))
+            if t == 1:
+                tl, _, no = res
+                train_loss.append(tl)
+                novelty.append(no)
+            if t == 2:
+                d1, d2, b2, _, _ = res
+                div1.append(d1)
+                div2.append(d2)
+                bleu2.append(b2)
+            if t == 3:
+                _, _, m4 = res
+                mixbleu4.append(m4)
+
+    epoch = len(train_loss)
+    return epoch, train_loss, novelty, div1, div2, bleu2, mixbleu4
+
+
 def tools_check_if_in_debug_mode():
     gettrace = getattr(sys, 'gettrace', lambda: None)
     return gettrace() is not None
 
 if __name__ == '__main__':
-    path = 'logs/pretrain_G_magic/21-05-05-17_41_33/epoch_65.predictions'
-    _, _, generated = tools_parse_log_file(path)
-    print(generated)
-
+    # path = 'logs/pretrain_G_magic/21-05-05-17_41_33/epoch_65.predictions'
+    # _, _, generated = tools_parse_log_file(path)
+    # print(generated)
+    path = 'logs/knowledge/21-05-22-15_01_32/evaluate.log'
+    epoch, train_loss, novelty, div1, div2, bleu2, mixbleu4 = tools_parse_eval_file(path)
+    print(train_loss)
+    pass
 
 
