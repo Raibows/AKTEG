@@ -127,12 +127,12 @@ def tools_parse_eval_file(path):
     :param path:
     :return:
     """
-    train_loss, _, novelty = [], None, []
+    train_loss, test_loss, novelty = [], [], []
     div1, div2, bleu2, _, _ = [], [], [], None, None
     _, _, mixbleu4 = None, None, []
     with open(path, 'r', encoding='utf-8') as file:
         t = 0
-        pat = '\d{1}\.\d+'
+        pat = '\d{1,2}\.\d+'
         for i, line in enumerate(file):
             if (i+1) % 4 == 0:
                 t = 0
@@ -142,8 +142,9 @@ def tools_parse_eval_file(path):
             res = re.findall(pat, line)
             res = list(map(lambda x: float(x), res))
             if t == 1:
-                tl, _, no = res
-                train_loss.append(tl)
+                trl, tel, no = res
+                train_loss.append(trl)
+                test_loss.append(tel)
                 novelty.append(no)
             if t == 2:
                 d1, d2, b2, _, _ = res
@@ -155,7 +156,7 @@ def tools_parse_eval_file(path):
                 mixbleu4.append(m4)
 
     epoch = len(train_loss)
-    return epoch, train_loss, novelty, div1, div2, bleu2, mixbleu4
+    return epoch, train_loss, test_loss, novelty, div1, div2, bleu2, mixbleu4
 
 
 def tools_check_if_in_debug_mode():
