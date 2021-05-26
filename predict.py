@@ -14,20 +14,26 @@ import argparse
 
 
 
+
 @torch.no_grad()
 def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
     predicts_set = []
     topics_set = []
     original_essays_set = []
+    criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=train_all_dataset.word2idx['<pad>']).to(device)
     test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False)
     metric = MetricGenerator()
-
+    test_loss = 0.0
 
     for i, (topic, topic_len, mems, essay_input, essay_target, essay_len) in enumerate(test_dataloader):
         topic, topic_len, mems, essay_input, essay_target, essay_len = \
             tools_to_gpu(topic, topic_len, mems, essay_input, essay_target, essay_len, device=device)
 
         logits = seq2seq.forward(topic, topic_len, essay_input, essay_len+1, mems, teacher_force=False)
+        loss = criterion(logits.view(-1, len(test_all_dataset.word2idx)), essay_target.view(-1)).item()
+        test_loss += loss
+
+
         # [batch, essay_len, vocab_size]
         predicts = logits.argmax(dim=-1)
         predicts_set.extend(predicts.tolist())
@@ -46,11 +52,13 @@ def prediction(seq2seq, train_all_dataset, test_dataset, device, res_path):
                 file.write('-*-' * int(test_dataset.essay_padding_len / 3.2))
                 file.write('\n')
 
+    test_loss /= len(test_dataloader)
     gram2, gram3, gram4, bleu2, bleu3, bleu4, novelty, div1, div2 = \
         metric.value(predicts_set, test_all_dataset, train_all_dataset, dataset_type='test')
     evaluate_print = f'bleu2 {gram2:.4f} bleu3 {gram3:.4f} bleu4 {gram4:.4f}\n' \
                      f'novelty {novelty:.4f} div1 {div1:.4f} div2 {div2:.4f}\n' \
-                     f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n'
+                     f'mixbleu2 {bleu2:.4f} mixbleu3 {bleu3:.4f} mixbleu4 {bleu4:.4f}\n' \
+                     f'test_loss {test_loss:.5f}'
     with open(res_path, 'a', encoding='utf-8') as file:
         file.write(evaluate_print)
     print(evaluate_print)
