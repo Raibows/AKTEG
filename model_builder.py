@@ -64,7 +64,9 @@ def build_model(model_name, dataset_name, vocab_size, device, load_path=None, in
         init_param(seq2seq, init_way=init_way)
     seq2seq.to(device)
     seq2seq.eval()
-    tools_get_logger('model_builder').info(f"loading pretrained {model_name} from {load_path}")
+    param_num = sum(param.numel() for param in seq2seq.parameters())
+
+    tools_get_logger('model_builder').info(f"loading pretrained {model_name} from {load_path}\nparams_all_num {param_num}")
 
     return seq2seq
 
